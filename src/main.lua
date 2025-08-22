@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContentProvider = game:GetService("ContentProvider")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local VIM = game:GetService("VirtualInputManager")
 
 -- Verificación de LocalPlayer
 local player = Players.LocalPlayer
@@ -530,6 +531,264 @@ macroDesc.TextYAlignment = Enum.TextYAlignment.Top
 macroDesc.TextWrapped = true
 macroDesc.Parent = macroPage
 
+-- ===== MACRO SYSTEM UI =====
+-- Container
+local macroUI = Instance.new("Frame")
+macroUI.Name = "MacroUI"
+macroUI.BackgroundColor3 = COLORS.background_tertiary
+macroUI.Size = UDim2.new(1, 0, 0, 210)
+macroUI.Position = UDim2.new(0, 0, 0, 100)
+macroUI.Parent = macroPage
+createCorner(macroUI, 10)
+createStroke(macroUI, COLORS.border, 1, 0.8)
+
+-- Top row: buttons
+local btnRow = Instance.new("Frame")
+btnRow.BackgroundTransparency = 1
+btnRow.Size = UDim2.new(1, -20, 0, 36)
+btnRow.Position = UDim2.new(0, 10, 0, 10)
+btnRow.Parent = macroUI
+
+local function makeButton(text, xOff)
+  local b = Instance.new("TextButton")
+  b.Text = text
+  b.Font = Enum.Font.SourceSansSemibold
+  b.TextSize = 14
+  b.TextColor3 = COLORS.text_secondary
+  b.BackgroundColor3 = COLORS.tab_inactive
+  b.Size = UDim2.new(0, 110, 1, 0)
+  b.Position = UDim2.new(0, xOff, 0, 0)
+  b.AutoButtonColor = false
+  b.Parent = btnRow
+  createCorner(b, 8)
+  createStroke(b, COLORS.border, 1, 0.7)
+  b.MouseEnter:Connect(function()
+    TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = COLORS.button_hover}):Play()
+  end)
+  b.MouseLeave:Connect(function()
+    TweenService:Create(b, TweenInfo.new(0.15), {BackgroundColor3 = COLORS.tab_inactive}):Play()
+  end)
+  return b
+end
+
+local recordBtn = makeButton("● Record", 0)
+local stopBtn   = makeButton("■ Stop", 120)
+local playBtn   = makeButton("▶ Play", 240)
+
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Font = Enum.Font.SourceSans
+statusLabel.TextSize = 14
+statusLabel.TextColor3 = COLORS.text_dim
+statusLabel.Text = "Status: idle"
+statusLabel.Size = UDim2.new(1, -20, 0, 20)
+statusLabel.Position = UDim2.new(0, 10, 0, 50)
+statusLabel.Parent = macroUI
+
+-- List header
+local listHeader = Instance.new("TextLabel")
+listHeader.BackgroundTransparency = 1
+listHeader.TextXAlignment = Enum.TextXAlignment.Left
+listHeader.Font = Enum.Font.SourceSansBold
+listHeader.TextSize = 14
+listHeader.TextColor3 = COLORS.text_primary
+listHeader.Text = "Recorded steps"
+listHeader.Size = UDim2.new(1, -20, 0, 18)
+listHeader.Position = UDim2.new(0, 10, 0, 75)
+listHeader.Parent = macroUI
+
+-- Scroll list
+local stepsList = Instance.new("ScrollingFrame")
+stepsList.BackgroundTransparency = 1
+stepsList.BorderSizePixel = 0
+stepsList.ScrollBarImageTransparency = 0.2
+stepsList.ScrollBarThickness = 4
+stepsList.Size = UDim2.new(1, -20, 0, 100)
+stepsList.Position = UDim2.new(0, 10, 0, 95)
+stepsList.CanvasSize = UDim2.new(0,0,0,0)
+stepsList.Parent = macroUI
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 4)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = stepsList
+
+-- ===== MACRO RECORDER WIRING (external module only) =====
+
+local MACRO_URL = "https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/recordmacro.lua"
+
+-- Preload recorder once (executor context) so UI button doesn't need loadstring later
+pcall(function()
+  if getgenv then
+    if type(getgenv().MoonWave_boot) ~= "function" then
+      local src = nil
+      -- try executor HTTP first, then game:HttpGet
+      pcall(function()
+        if syn and syn.request then
+          local r = syn.request({Url=MACRO_URL, Method="GET"}); src = r and r.Body
+        elseif http and http.request then
+          local r = http.request({Url=MACRO_URL, Method="GET"}); src = r and (r.Body or r.body)
+        end
+      end)
+      if not src then
+        local okHttp, body = pcall(function() return game:HttpGet(MACRO_URL) end)
+        if okHttp then src = body end
+      end
+      if type(src) == "string" and #src > 0 then
+        local ld = (getgenv() and getgenv().loadstring) or loadstring or load
+        if type(ld) == "function" then
+          local chunk = ld(src)
+          if type(chunk) == "function" then
+            getgenv().MoonWave_boot = chunk
+          end
+        end
+      end
+    end
+  end
+end)
+
+local function macroStatus(msg)
+  statusLabel.Text = "Status: " .. tostring(msg)
+end
+
+local function clearList()
+  for _,child in ipairs(stepsList:GetChildren()) do
+    if child:IsA("TextLabel") then child:Destroy() end
+  end
+  stepsList.CanvasSize = UDim2.new(0,0,0,0)
+end
+
+local function startMacroRecorder()
+  local already = false
+  pcall(function()
+    if getgenv and (getgenv().MoonWave_v07t or getgenv().MoonWave_v07sUPG or getgenv().MoonWave_v06cUPG) then
+      already = true
+    end
+  end)
+  if not already then
+    local function http_get(url)
+      local body
+      pcall(function()
+        if syn and syn.request then
+          local r = syn.request({Url=url, Method="GET"}); body = r and r.Body
+        elseif http and http.request then
+          local r = http.request({Url=url, Method="GET"}); body = r and (r.Body or r.body)
+        end
+      end)
+      if not body then
+        local ok2, res = pcall(function() return game:HttpGet(url) end)
+        if ok2 then body = res end
+      end
+      return body
+    end
+
+    local function to_func(ret1, ret2)
+      if type(ret1) == "function" then return ret1 end
+      if type(ret1) == "table" and type(ret1.func) == "function" then return ret1.func end
+      if type(ret2) == "function" then return ret2 end
+      return nil
+    end
+
+    local function try_compile(src)
+      -- Try executor-specific loaders first
+      local f
+      pcall(function()
+        if syn and type(syn.loadstring)=="function" then f = syn.loadstring(src) end
+      end)
+      f = to_func(f)
+      if f then return f end
+
+      pcall(function()
+        if fluxus and type(fluxus.loadstring)=="function" then f = fluxus.loadstring(src) end
+      end)
+      f = to_func(f)
+      if f then return f end
+
+      pcall(function()
+        if KRNL_LOADED and type(loadstring)=="function" then f = loadstring(src) end
+      end)
+      f = to_func(f)
+      if f then return f end
+
+      pcall(function()
+        if getgenv and type(getgenv().loadstring)=="function" then f = getgenv().loadstring(src) end
+      end)
+      f = to_func(f)
+      if f then return f end
+
+      if type(loadstring) == "function" then
+        local f1, e1 = loadstring(src)
+        f = to_func(f1, e1); if f then return f end
+      end
+
+      -- Luau load variants
+      if type(load) == "function" then
+        local env = (getfenv and getfenv()) or _G
+        local f2, e2 = load(src, "@recorder", "t", env)
+        f = to_func(f2, e2); if f then return f end
+        local f3, e3 = load(src)
+        f = to_func(f3, e3); if f then return f end
+      end
+
+      return nil
+    end
+
+    local ok, err = pcall(function()
+      local src = http_get(MACRO_URL)
+      assert(type(src)=="string" and #src>0, "empty http body")
+      local chunk = try_compile(src)
+      if type(chunk) ~= "function" then
+        local head = tostring(src):sub(1,120):gsub("\n"," ")
+        warn("[MacroUI] Preview(120): ", head)
+        error("no loader available (executor restricts loadstring)")
+      end
+      return chunk()
+    end)
+    if not ok then
+      warn("[MacroUI] Failed to load recorder:", err)
+      macroStatus("error loading")
+      return
+    end
+  end
+
+  -- Hook UI status callback so the recorder can update our label (finished, manual stop, etc.)
+  pcall(function()
+    if getgenv and getgenv().MoonWave_API and type(getgenv().MoonWave_API.onStatus) == "function" then
+      getgenv().MoonWave_API.onStatus(function(msg)
+        macroStatus(msg)
+      end)
+      local last = (getgenv() and getgenv().MoonWave_Status) or nil
+      macroStatus(last or "Recording...")
+    else
+      macroStatus("Recording adelante")
+    end
+  end)
+end
+
+local function stopMacroRecorder()
+  pcall(function()
+    if getgenv and getgenv().MoonWave_API and type(getgenv().MoonWave_API.stop) == "function" then
+      getgenv().MoonWave_API.stop()
+    end
+  end)
+  -- status will be updated by the recorder via onStatus callback
+end
+
+-- Hook buttons ONLY to external recorder
+recordBtn.MouseButton1Click:Connect(function()
+  startMacroRecorder()
+end)
+
+stopBtn.MouseButton1Click:Connect(function()
+  stopMacroRecorder()
+end)
+
+playBtn.MouseButton1Click:Connect(function()
+  macroStatus("play (coming soon)")
+end)
+
 -- ===== FUNCIONES DE NAVEGACIÓN =====
 local function switchTab(tabName)
   if currentTab == tabName then return end
@@ -652,6 +911,16 @@ local function extractNumber(text)
     local digits = text:gsub("%D", "")
     return tonumber(digits)
   end
+  if type(text) == "table" then
+    -- Try common fields; if none, return nil to avoid writing 'table: 0x..' to labels
+    local candidates = {text.Value, text.amount, text.Amount, text.val}
+    for _,v in ipairs(candidates) do
+      local n = (type(v) == "number") and v
+              or (type(v) == "string" and tonumber((v:gsub("%D",""))))
+      if n then return n end
+    end
+    return nil
+  end
   return nil
 end
 
@@ -664,7 +933,7 @@ task.spawn(function()
   if updateEvent and updateEvent:IsA("RemoteEvent") then
     updateEvent.OnClientEvent:Connect(function(data)
       if type(data) == "table" then
-        updateValues(data.Premium, data.Cash, nil)
+        updateValues(extractNumber(data.Premium), extractNumber(data.Cash), nil)
         
         local tb = data["Trait Burner"] or data.TraitBurner or data.TB
         if tb then
@@ -737,5 +1006,11 @@ end)
 
 -- ===== BOTÓN CERRAR =====
 closeButton.MouseButton1Click:Connect(function()
+  -- ensure macro system stops cleanly (external recorder)
+  pcall(function()
+    if getgenv and getgenv().MoonWave_API and type(getgenv().MoonWave_API.stop) == "function" then
+      getgenv().MoonWave_API.stop()
+    end
+  end)
   gui:Destroy()
 end)
