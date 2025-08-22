@@ -45,6 +45,42 @@ local ICONS = {
   traitburner = "rbxassetid://100013769550089"
 }
 
+-- === FindTB external module loader (no UI changes) ===
+local FIND_TB_URL = "https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/findtb.lua"
+_G.FindTBActive = _G.FindTBActive or false
+_G.FindTB       = _G.FindTB       or nil -- will hold returned API {stop,status}
+
+local function startFindTB()
+  if _G.FindTBActive then return true end
+  _G.FindTBActive = true
+  local ok, mod = pcall(function()
+    return loadstring(game:HttpGet(FIND_TB_URL))()
+  end)
+  if ok and type(mod) == "table" then
+    _G.FindTB = mod
+    return true
+  else
+    warn("[FindTB] Failed to load module:", mod)
+    _G.FindTBActive = false
+    return false
+  end
+end
+
+local function stopFindTB()
+  _G.FindTBActive = false
+  if _G.FindTB and type(_G.FindTB.stop) == "function" then
+    pcall(_G.FindTB.stop)
+  end
+end
+
+local function getFindTBStatus()
+  if _G.FindTB and type(_G.FindTB.status) == "function" then
+    local ok, s = pcall(_G.FindTB.status)
+    if ok then return s end
+  end
+  return { active = _G.FindTBActive, entered = false, lastSelected = "Challenge1" }
+end
+
 -- Variables de estado
 local lastGems, lastCash, lastTB = nil, nil, nil
 local isDragging = false
@@ -401,6 +437,7 @@ tbDescription.TextYAlignment = Enum.TextYAlignment.Top
 tbDescription.TextWrapped = true
 tbDescription.Parent = findTBButton
 
+
 -- Toggle State Variable
 local isTBActive = false
 
@@ -417,7 +454,20 @@ local function toggleTB()
     TweenService:Create(toggleSwitch, TweenInfo.new(0.2), {
       BackgroundColor3 = COLORS.accent
     }):Play()
-    -- No text update needed
+    
+    -- Start FindTB external module
+    local ok = startFindTB()
+    if not ok then
+      -- revert toggle UI if loading failed
+      isTBActive = false
+      TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+        Position = UDim2.new(0, 2, 0.5, 0)
+      }):Play()
+      TweenService:Create(toggleSwitch, TweenInfo.new(0.2), {
+        BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+      }):Play()
+      return
+    end
   else
     -- Animate to OFF
     TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
@@ -427,7 +477,9 @@ local function toggleTB()
     TweenService:Create(toggleSwitch, TweenInfo.new(0.2), {
       BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     }):Play()
-    -- No text update needed
+    
+    -- Stop FindTB external module
+    stopFindTB()
   end
 end
 
