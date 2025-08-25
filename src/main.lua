@@ -757,7 +757,6 @@ statusPulse.Color = Color3.fromRGB(80, 80, 90)
 statusPulse.Thickness = 2
 statusPulse.Transparency = 0.5
 statusPulse.Parent = statusIndicator
-createCorner(statusIndicator, 5)
 
 -- Status text
 local statusText = Instance.new("TextLabel")
@@ -883,22 +882,6 @@ pcall(function()
   end
 end)
 
--- Hook MacroAPI status into the UI (if available)
-pcall(function()
-  if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.onStatus then
-    getgenv().MacroAPI.onStatus(function(msg)
-      applyRecorderStatus(msg)
-    end)
-    -- Initialize with current status, if provided
-    if type(getgenv().MacroAPI.status) == "function" then
-      local st = getgenv().MacroAPI.status()
-      if type(st) == "table" and st.statusMsg then
-        applyRecorderStatus(st.statusMsg)
-      end
-    end
-  end
-end)
-
 -- Recorded actions list
 local listContainer = Instance.new("Frame")
 listContainer.BackgroundColor3 = COLORS.background_secondary
@@ -932,6 +915,9 @@ createCorner(actionsList, 8)
 local actionsLayout = Instance.new("UIListLayout")
 actionsLayout.Padding = UDim.new(0, 2)
 actionsLayout.Parent = actionsList
+actionsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+  actionsList.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
+end)
 
 -- Macro state
 local isRecording = false
@@ -959,16 +945,31 @@ local function updateStatus(state, description)
   end
 end
 
--- Bridge: map recorder status messages to UI states
+local addActionToList  -- forward declaration for action list appender
+
 local function applyRecorderStatus(msg)
   local s = tostring(msg or "")
   local l = s:lower()
-  if l:find("recording") then
+
+  -- Transient saving indicator on end-signal
+  if l:find("end_log:arigato4", 1, true) or l:find("recording finished", 1, true) then
+    -- Show a brief saving state
+    updateStatus("recording", "Stopping… Saving…")
+    task.delay(1.2, function()
+      updateStatus("idle", "Recording finished - saved to file")
+    end)
+    return
+  end
+
+  if l:find("saved:", 1, true) then
+    updateStatus("idle", s)  -- e.g., "Saved: Moon_Macros/…"
+    return
+  end
+
+  if l:find("recording", 1, true) then
     updateStatus("recording", s)
-  elseif l:find("playing") then
+  elseif l:find("playing", 1, true) then
     updateStatus("playing", s)
-  elseif l:find("end_log:arigato4") then
-    updateStatus("idle", "Recording finished - saved to file")
   elseif #s > 0 then
     updateStatus("idle", s)
   else
@@ -976,20 +977,85 @@ local function applyRecorderStatus(msg)
   end
 end
 
+-- Bridge: map recorder action messages to UI list
+local function applyRecorderAction(msg)
+  if type(msg) == "string" and #msg > 0 then
+    addActionToList(msg, "log")
+    return
+  end
+
+  if type(msg) == "table" and msg.kind then
+    local txt = msg.kind
+    if msg.data and msg.data.unit then
+      txt = txt .. " | " .. tostring(msg.data.unit)
+      if msg.data.pk then
+        txt = txt .. " @" .. msg.data.pk
+      end
+    end
+    addActionToList(txt, tostring(msg.kind))
+  end
+end
+
+
+
 -- Add action to list
-local function addActionToList(actionText)
+local KINDS_COLORS = {
+  place = Color3.fromRGB(120, 200, 120),
+  upgrade = Color3.fromRGB(120, 160, 230),
+  sell = Color3.fromRGB(230, 120, 120),
+  wave_set = Color3.fromRGB(180, 140, 230),
+  StartVoteYes = Color3.fromRGB(255, 200, 120),
+  SkipVoteYes  = Color3.fromRGB(255, 200, 120),
+  end_log_detected = Color3.fromRGB(210, 210, 210),
+  ["auto_stop"] = Color3.fromRGB(210, 210, 210),
+  log = COLORS.text_primary
+}
+
+function addActionToList(actionText, kind)
   local actionItem = Instance.new("TextLabel")
-  actionItem.Text = "→ " .. actionText
-  actionItem.TextColor3 = COLORS.text_primary
+  actionItem.Text = "→ " .. tostring(actionText or "")
+  actionItem.TextColor3 = KINDS_COLORS[kind] or COLORS.text_primary
   actionItem.BackgroundTransparency = 1
   actionItem.Font = Enum.Font.SourceSans
   actionItem.TextSize = 12
-  actionItem.Size = UDim2.new(1, -10, 0, 20)
   actionItem.TextXAlignment = Enum.TextXAlignment.Left
+  actionItem.Size = UDim2.new(1, -10, 0, 20)
   actionItem.Parent = actionsList
-  
-  actionsList.CanvasSize = UDim2.new(0, 0, 0, #actionsList:GetChildren() * 22)
+
+  -- Ajusta el canvas al contenido real
+  actionsList.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
+
+  -- Auto-scroll al final para ver siempre la última acción
+  task.defer(function()
+    local y = math.max(0, actionsList.AbsoluteCanvasSize.Y - actionsList.AbsoluteSize.Y)
+    actionsList.CanvasPosition = Vector2.new(0, y)
+  end)
 end
+
+-- Register MacroAPI status callback (after functions are defined)
+pcall(function()
+  if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.onStatus then
+    getgenv().MacroAPI.onStatus(function(msg)
+      applyRecorderStatus(msg)
+    end)
+    -- Initialize with current status, if provided
+    if type(getgenv().MacroAPI.status) == "function" then
+      local st = getgenv().MacroAPI.status()
+      if type(st) == "table" and st.statusMsg then
+        applyRecorderStatus(st.statusMsg)
+      end
+    end
+  end
+end)
+
+-- Register MacroAPI action callback (after functions are defined)
+pcall(function()
+  if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.onAction then
+    getgenv().MacroAPI.onAction(function(msg)
+      applyRecorderAction(msg)
+    end)
+  end
+end)
 
 local function countRecordedRows()
   local n = 0
