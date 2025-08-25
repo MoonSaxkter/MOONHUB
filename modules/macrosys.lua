@@ -22,7 +22,7 @@ do
     END_LOG_KEY    = "arigato4",
     END_GUARD_S    = 2.0,
 
-    PLACE_KEYS     = { "place", "deploy", "spawn", "summon", "placeunit", "placetower" },
+    PLACE_KEYS     = { "place", "deploy", "spawn", "summon", "placeunit", "placetower", "summonunit", "spawnunit", "place_unit", "deployunit" },
     LOG_PLACE_PREFIX = "adding link",
 
     PRINT_EVENTS   = true,
@@ -405,19 +405,40 @@ do
   logprint("Hook", "Namecall enganchado (waves + placement + upgrade + sell). Grabando...")
   if CFG.PRINT_EVENTS then print("[WaveRec] ConsolePing | Summon/Upgrade/Sell ON") end
 
-  -- ===================== cierre por log: "Arigato4" =====================
+  -- ===================== cierre por log: "Arigato4" + parser de "adding link" (fallback de PLACE) =====================
   if LogService then
     STATE.logConn = LogService.MessageOut:Connect(function(msg, typ)
       if not STATE.recording then return end
-      local low = string.lower(tostring(msg or ""))
+      local when = now()
+      local raw = tostring(msg or "")
+      local low = string.lower(raw)
 
-      if low:find("arigato4", 1, true) then
-        warn("[WaveRec] Detectado Arigato4 en logs, deteniendo grabación…")
-        push("end_log_detected", {key="arigato4"})
-        autoStop("end_log:arigato4")
+      -- Fallback de colocación: "adding link <Unidad> ... X, Y, Z"
+      -- Ejemplo de línea:
+      --   adding link Teiuchi table: 0x...  -137.26, 3.75, -92.94
+      if low:find(tolow(CFG.LOG_PLACE_PREFIX), 1, true) then
+        local unit = raw:match("adding link%s+([%w_%-%s]+)%s+table") or raw:match("adding link%s+([%w_%-%s]+)")
+        local x,y,z = raw:match("([%-%d%.]+)%s*,%s*([%-%d%.]+)%s*,%s*([%-%d%.]+)")
+        if unit and x and y and z then
+          local pos = { x = num(tonumber(x)), y = num(tonumber(y)), z = num(tonumber(z)) }
+          push("place", {remote="LOG:adding_link", unit=unit:gsub("%s+$",""), pos=pos, pk=pk_from_tbl(pos)})
+          STATE.lastHit = when
+          if CFG.PRINT_EVENTS then
+            print(("[WaveRec] Summon(LOG) | %s @ %s"):format(unit:gsub("%s+$",""), fmtPos(pos)))
+          end
+        end
+      end
+
+      -- Auto-stop por "Arigato4" (tras Wave 1 y pequeña guarda)
+      if STATE.wave >= 1 and (when - STATE.lastHit) >= (CFG.END_GUARD_S or 0) then
+        if low:find("arigato4", 1, true) then
+          warn("[WaveRec] Detectado Arigato4 en logs, deteniendo grabación…")
+          push("end_log_detected", {key="arigato4"})
+          autoStop("end_log:arigato4")
+        end
       end
     end)
-    logprint("EndSniff", "Escuchando Arigato4 en consola para detener")
+    logprint("EndSniff", 'Arma por log "arigato4" (activo tras Wave 1) y parser "adding link ..." para PLACE')
   end
 
   -- ===================== fallback: solo autosave periódico; fin por END_LOG_KEY =====================
