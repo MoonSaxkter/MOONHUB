@@ -974,6 +974,14 @@ local function addActionToList(actionText)
   actionsList.CanvasSize = UDim2.new(0, 0, 0, #actionsList:GetChildren() * 22)
 end
 
+local function countRecordedRows()
+  local n = 0
+  for _, child in ipairs(actionsList:GetChildren()) do
+    if child:IsA("TextLabel") then n = n + 1 end
+  end
+  return n
+end
+
 recordBtn.MouseButton1Click:Connect(function()
   -- Clear previous recordings in the UI list
   for _, child in ipairs(actionsList:GetChildren()) do
@@ -1011,7 +1019,7 @@ stopBtn.MouseButton1Click:Connect(function()
   if not usedAPI then
     if isRecording then
       isRecording = false
-      updateStatus("idle", "Recording stopped - " .. #actionsList:GetChildren() .. " actions")
+      updateStatus("idle", "Recording stopped - " .. tostring(countRecordedRows()) .. " actions")
     elseif isPlaying then
       isPlaying = false
       updateStatus("idle", "Playback stopped")
@@ -1120,30 +1128,44 @@ end
 
 makeDraggable(mainFrame, topBar)
 
+local function toNumberSafe(v)
+  if v == nil then return nil end
+  if type(v) == "number" then return v end
+  if type(v) == "string" then
+    local digits = v:gsub("%D", "")
+    return tonumber(digits)
+  end
+  return nil
+end
+
 -- ===== ACTUALIZACIÓN DE VALORES =====
 local function updateValues(gems, gold, tb)
-  if gems ~= nil then
-    if lastGems and gems ~= lastGems then
-      flashLabel(gemsValue, gems > lastGems)
+  local g = toNumberSafe(gems)
+  local c = toNumberSafe(gold)
+  local t = toNumberSafe(tb)
+
+  if g ~= nil then
+    if lastGems and g ~= lastGems then
+      flashLabel(gemsValue, g > lastGems)
     end
-    gemsValue.Text = formatNumber(gems)
-    lastGems = gems
+    gemsValue.Text = formatNumber(g)
+    lastGems = g
   end
-  
-  if gold ~= nil then
-    if lastCash and gold ~= lastCash then
-      flashLabel(goldValue, gold > lastCash)
+
+  if c ~= nil then
+    if lastCash and c ~= lastCash then
+      flashLabel(goldValue, c > lastCash)
     end
-    goldValue.Text = formatNumber(gold)
-    lastCash = gold
+    goldValue.Text = formatNumber(c)
+    lastCash = c
   end
-  
-  if tb ~= nil then
-    if lastTB and tb ~= lastTB then
-      flashLabel(tbValue, tb > lastTB)
+
+  if t ~= nil then
+    if lastTB and t ~= lastTB then
+      flashLabel(tbValue, t > lastTB)
     end
-    tbValue.Text = formatNumber(tb)
-    lastTB = tb
+    tbValue.Text = formatNumber(t)
+    lastTB = t
   end
 end
 
@@ -1166,7 +1188,7 @@ task.spawn(function()
   if updateEvent and updateEvent:IsA("RemoteEvent") then
     updateEvent.OnClientEvent:Connect(function(data)
       if type(data) == "table" then
-        updateValues(data.Premium, data.Cash, nil)
+        updateValues(toNumberSafe(data.Premium) or toNumberSafe(data.Gems), toNumberSafe(data.Cash), nil)
         
         local tb = data["Trait Burner"] or data.TraitBurner or data.TB
         if tb then
