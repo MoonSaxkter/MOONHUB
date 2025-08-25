@@ -1168,30 +1168,6 @@ task.spawn(function()
   end
 end)
 
--- Escaneo periódico para Trait Burners
-task.spawn(function()
-  while wait(2) do
-    for _, label in ipairs(player.PlayerGui:GetDescendants()) do
-      if label:IsA("TextLabel") and label.Visible then
-        local text = tostring(label.Text or ""):lower()
-        if text:match("trait%s*burner") then
-          local parent = label.Parent
-          if parent then
-            for _, sibling in ipairs(parent:GetDescendants()) do
-              if sibling:IsA("TextLabel") and sibling ~= label then
-                local value = extractNumber(sibling.Text)
-                if value and value > 0 then
-                  updateValues(nil, nil, value)
-                  break
-                end
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-end)
 
 -- ===== BOTÓN CERRAR =====
 closeButton.MouseButton1Click:Connect(function()
