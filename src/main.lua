@@ -950,23 +950,13 @@ recordBtn.MouseButton1Click:Connect(function()
     isRecording = true
     recordedActions = {}
     updateStatus("recording", "Recording your actions...")
-    
+
     -- Clear previous recordings
     for _, child in ipairs(actionsList:GetChildren()) do
       if child:IsA("TextLabel") then
         child:Destroy()
       end
     end
-    
-    -- Simulate recording
-    task.spawn(function()
-      wait(1)
-      addActionToList("Mouse moved to (450, 320)")
-      wait(0.5)
-      addActionToList("Left click at (450, 320)")
-      wait(0.5)
-      addActionToList("Key pressed: E")
-    end)
   end
 end)
 
