@@ -782,20 +782,25 @@ statusDesc.Position = UDim2.new(0, 35, 0, 30)
 statusDesc.TextXAlignment = Enum.TextXAlignment.Left
 statusDesc.Parent = controlPanel
 
--- Button container
 local buttonContainer = Instance.new("Frame")
 buttonContainer.BackgroundTransparency = 1
-buttonContainer.Size = UDim2.new(1, -40, 0, 45)
+buttonContainer.Size = UDim2.new(1, -40, 0, 40)
 buttonContainer.Position = UDim2.new(0, 20, 0, 100)
 buttonContainer.Parent = macroContainer
 
--- Modern button creation function
-local function createMacroButton(icon, text, color, position)
+local buttonsLayout = Instance.new("UIListLayout")
+buttonsLayout.FillDirection = Enum.FillDirection.Horizontal
+buttonsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+buttonsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+buttonsLayout.Padding = UDim.new(0, 12)
+buttonsLayout.Parent = buttonContainer
+
+local function createMacroButton(icon, text, color)
   local button = Instance.new("TextButton")
   button.Text = ""
   button.BackgroundColor3 = color
-  button.Size = UDim2.new(0, 110, 0, 45)
-  button.Position = position
+  button.Size = UDim2.new(0, 110, 0, 40)
+  button.Position = UDim2.new(0, 0, 0, 0)
   button.AutoButtonColor = false
   button.Parent = buttonContainer
   createCorner(button, 10)
@@ -836,7 +841,7 @@ local function createMacroButton(icon, text, color, position)
   -- Hover effect
   button.MouseEnter:Connect(function()
     TweenService:Create(button, TweenInfo.new(0.2), {
-      Size = UDim2.new(0, 115, 0, 48),
+      Size = UDim2.new(0, 114, 0, 43),
       BackgroundTransparency = 0.1
     }):Play()
     TweenService:Create(shadow, TweenInfo.new(0.2), {
@@ -847,7 +852,7 @@ local function createMacroButton(icon, text, color, position)
   
   button.MouseLeave:Connect(function()
     TweenService:Create(button, TweenInfo.new(0.2), {
-      Size = UDim2.new(0, 110, 0, 45),
+      Size = UDim2.new(0, 110, 0, 40),
       BackgroundTransparency = 0
     }):Play()
     TweenService:Create(shadow, TweenInfo.new(0.2), {
@@ -859,10 +864,10 @@ local function createMacroButton(icon, text, color, position)
   return button, iconLabel
 end
 
--- Create buttons
-local recordBtn, recordIcon = createMacroButton("●", "Record", Color3.fromRGB(220, 60, 60), UDim2.new(0, 0, 0, 0))
-local playBtn, playIcon = createMacroButton("▶", "Play", Color3.fromRGB(60, 180, 75), UDim2.new(0, 120, 0, 0))
-local stopBtn, stopIcon = createMacroButton("■", "Stop", Color3.fromRGB(100, 100, 120), UDim2.new(0, 240, 0, 0))
+-- Create buttons (centered and balanced)
+local recordBtn, recordIcon = createMacroButton("●", "Record", Color3.fromRGB(220, 60, 60))
+local playBtn, playIcon   = createMacroButton("▶", "Play",   Color3.fromRGB(60, 180, 75))
+local stopBtn, stopIcon   = createMacroButton("■", "Stop",   Color3.fromRGB(100, 100, 120))
 
 -- Recorded actions list
 local listContainer = Instance.new("Frame")
