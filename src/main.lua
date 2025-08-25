@@ -864,10 +864,25 @@ local function createMacroButton(icon, text, color)
   return button, iconLabel
 end
 
--- Create buttons (centered and balanced)
 local recordBtn, recordIcon = createMacroButton("●", "Record", Color3.fromRGB(220, 60, 60))
 local playBtn, playIcon   = createMacroButton("▶", "Play",   Color3.fromRGB(60, 180, 75))
 local stopBtn, stopIcon   = createMacroButton("■", "Stop",   Color3.fromRGB(100, 100, 120))
+
+-- Hook MacroAPI status into the UI (if available)
+pcall(function()
+  if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.onStatus then
+    getgenv().MacroAPI.onStatus(function(msg)
+      applyRecorderStatus(msg)
+    end)
+    -- Initialize with current status, if provided
+    if type(getgenv().MacroAPI.status) == "function" then
+      local st = getgenv().MacroAPI.status()
+      if type(st) == "table" and st.statusMsg then
+        applyRecorderStatus(st.statusMsg)
+      end
+    end
+  end
+end)
 
 -- Recorded actions list
 local listContainer = Instance.new("Frame")
@@ -929,6 +944,21 @@ local function updateStatus(state, description)
   end
 end
 
+-- Bridge: map recorder status messages to UI states
+local function applyRecorderStatus(msg)
+  local s = tostring(msg or "")
+  local l = s:lower()
+  if l:find("recording") then
+    updateStatus("recording", s)
+  elseif l:find("playing") then
+    updateStatus("playing", s)
+  elseif #s > 0 then
+    updateStatus("idle", s)
+  else
+    updateStatus("idle", "Ready to record")
+  end
+end
+
 -- Add action to list
 local function addActionToList(actionText)
   local actionItem = Instance.new("TextLabel")
@@ -944,29 +974,48 @@ local function addActionToList(actionText)
   actionsList.CanvasSize = UDim2.new(0, 0, 0, #actionsList:GetChildren() * 22)
 end
 
--- Button connections
 recordBtn.MouseButton1Click:Connect(function()
-  if not isRecording and not isPlaying then
-    isRecording = true
-    recordedActions = {}
-    updateStatus("recording", "Recording your actions...")
+  -- Clear previous recordings in the UI list
+  for _, child in ipairs(actionsList:GetChildren()) do
+    if child:IsA("TextLabel") then child:Destroy() end
+  end
+  recordedActions = {}
 
-    -- Clear previous recordings
-    for _, child in ipairs(actionsList:GetChildren()) do
-      if child:IsA("TextLabel") then
-        child:Destroy()
-      end
+  -- Prefer the external recorder API if available
+  local usedAPI = false
+  pcall(function()
+    if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.start then
+      getgenv().MacroAPI.start()
+      usedAPI = true
+    end
+  end)
+
+  if not usedAPI then
+    -- Fallback: just switch UI state (no simulated actions)
+    if not isRecording and not isPlaying then
+      isRecording = true
+      updateStatus("recording", "Recording your actions...")
     end
   end
 end)
 
 stopBtn.MouseButton1Click:Connect(function()
-  if isRecording then
-    isRecording = false
-    updateStatus("idle", "Recording stopped - " .. #actionsList:GetChildren() .. " actions")
-  elseif isPlaying then
-    isPlaying = false
-    updateStatus("idle", "Playback stopped")
+  local usedAPI = false
+  pcall(function()
+    if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.stop then
+      getgenv().MacroAPI.stop()
+      usedAPI = true
+    end
+  end)
+
+  if not usedAPI then
+    if isRecording then
+      isRecording = false
+      updateStatus("idle", "Recording stopped - " .. #actionsList:GetChildren() .. " actions")
+    elseif isPlaying then
+      isPlaying = false
+      updateStatus("idle", "Playback stopped")
+    end
   end
 end)
 
