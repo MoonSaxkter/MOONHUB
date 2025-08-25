@@ -97,6 +97,15 @@ do
     end)
   end
 
+  -- === UI action emitter (optional, for UI glue) ===
+  local function emit_action(msg)
+    pcall(function()
+      if type(getgenv().MoonWave_OnAction) == "function" then
+        pcall(getgenv().MoonWave_OnAction, msg)
+      end
+    end)
+  end
+
   -- === Helpers para pk/pos y anotación asíncrona de PLACE ===
   local function round1(x) return math.floor((x or 0)*10+0.5)/10 end
   local function pk_from_tbl(p)
@@ -199,13 +208,16 @@ do
 
   local function push(kind, data, dtOverride)
     STATE.idx += 1
-    STATE.log[#STATE.log+1] = {
-      i=STATE.idx,
-      dt = dtOverride or round(now()-STATE.t0,3),
+    local ev = {
+      i = STATE.idx,
+      dt = dtOverride or round(now()-STATE.t0, 3),
       kind = kind,
       wave = STATE.wave,
       data = data or {}
     }
+    STATE.log[#STATE.log+1] = ev
+    -- Notificar a la UI con evento estructurado (UI decide cómo renderizar)
+    emit_action(ev)
   end
   local function saveJSON()
     local path = ("%s/%s.json"):format(CFG.FOLDER, STATE.name)
@@ -222,7 +234,9 @@ do
       events = STATE.log
     }
     local ok = pcall(function() if writefile then writefile(path, json_encode_clean(payload)) end end)
-    if ok then logprint("Guardado", path)
+    if ok then
+      logprint("Guardado", path)
+      emit_status("Saved: "..path)
     else
       logprint("Dump", "Executor sin writefile. Copia el JSON de abajo.")
       print("==== MOON MACRO JSON BEGIN ===="); print(json_encode_clean(payload)); print("==== MOON MACRO JSON END ====")
@@ -231,6 +245,7 @@ do
   local function autoStop(reason)
     if STATE.ended or not STATE.recording then return end
     STATE.ended = true; STATE.recording = false
+    emit_status("Stopping.. Saving..")
     if STATE.logConn then pcall(function() STATE.logConn:Disconnect() end); STATE.logConn = nil end
 
     -- Friendly status for UI consumers
@@ -273,13 +288,14 @@ do
             if (t - STATE.lastClick.StartVoteYes) >= CFG.DEBOUNCE_SEC then
               STATE.lastClick.StartVoteYes = t
               if STATE.wave == 0 then bump_wave_to(1, "StartVoteYes"); push("StartVoteYes") else push("StartVoteYes_dup") end
+              emit_action("StartVoteYes")
               STATE.lastHit = t
             end
           elseif code == "SkipVoteYes" then
             if (t - STATE.lastClick.SkipVoteYes) >= CFG.DEBOUNCE_SEC then
               STATE.lastClick.SkipVoteYes = t
               if STATE.wave >= 1 and STATE.wave < CFG.MAX_WAVES then
-                bump_wave_to(STATE.wave+1, "SkipVoteYes"); push("SkipVoteYes"); STATE.lastHit = t
+                bump_wave_to(STATE.wave+1, "SkipVoteYes"); push("SkipVoteYes"); emit_action("SkipVoteYes"); STATE.lastHit = t
               else
                 push("Skip_ignored", {wave=STATE.wave})
               end
@@ -304,6 +320,7 @@ do
                 if unitName and pos then annotate_place_async(evIndex, unitName, pos) end
                 STATE.lastHit = now()
                 if CFG.PRINT_EVENTS then print(("[WaveRec] Summon(GameStuff) | %s @ %s"):format(tostring(unitName or "?"), fmtPos(pos))) end
+                emit_action(string.format("place | %s @ %s", tostring(unitName or "?"), fmtPos(pos)))
                 break
               end
             end
@@ -328,6 +345,7 @@ do
         if unitName and pos then annotate_place_async(evIndex, unitName, pos) end
         STATE.lastHit = now()
         if CFG.PRINT_EVENTS then print(("[WaveRec] Summon(%s) | %s @ %s"):format(tostring(PLACE_MAP[self]), tostring(unitName or "?"), fmtPos(pos))) end
+        emit_action(string.format("place | %s @ %s", tostring(unitName or "?"), fmtPos(pos)))
         inHook = false
       end
     end
@@ -391,6 +409,7 @@ do
               print(("[WaveRec] %s | %s%s via GetFunction"):format(
                 string.upper(kind), unitName or "?", posHint and (" @ "..fmtPos(posHint)) or ""))
             end
+            emit_action(string.format("%s | %s%s", string.lower(kind), unitName or "?", posHint and (" @ "..fmtPos(posHint)) or ""))
           end)
           -- ========== /FIX ==========
 
@@ -426,6 +445,7 @@ do
           if CFG.PRINT_EVENTS then
             print(("[WaveRec] Summon(LOG) | %s @ %s"):format(unit:gsub("%s+$",""), fmtPos(pos)))
           end
+          emit_action(string.format("place | %s @ %s", unit:gsub("%s+$",""), fmtPos(pos)))
         end
       end
 
@@ -433,6 +453,8 @@ do
       if STATE.wave >= 1 and (when - STATE.lastHit) >= (CFG.END_GUARD_S or 0) then
         if low:find("arigato4", 1, true) then
           warn("[WaveRec] Detectado Arigato4 en logs, deteniendo grabación…")
+          emit_status("Stopping.. Saving..")
+          emit_action("end_log_detected | arigato4")
           push("end_log_detected", {key="arigato4"})
           autoStop("end_log:arigato4")
         end
@@ -522,6 +544,23 @@ do
       end
     end
 
+    api.onAction = function(cb)
+      if type(cb)=="function" then
+        getgenv().MoonWave_OnAction = cb
+      else
+        getgenv().MoonWave_OnAction = nil
+      end
+    end
+
+    api.getLog = function()
+      return STATE.log
+    end
+
+    api.getFileName = function()
+      return ("%s/%s.json"):format(CFG.FOLDER, STATE.name)
+    end
+
     getgenv().MacroAPI = api
   end)
 end
+
