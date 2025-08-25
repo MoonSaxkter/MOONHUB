@@ -967,6 +967,8 @@ local function applyRecorderStatus(msg)
     updateStatus("recording", s)
   elseif l:find("playing") then
     updateStatus("playing", s)
+  elseif l:find("end_log:arigato4") then
+    updateStatus("idle", "Recording finished - saved to file")
   elseif #s > 0 then
     updateStatus("idle", s)
   else
