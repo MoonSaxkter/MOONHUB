@@ -736,11 +736,23 @@ macroGradient.Color = ColorSequence.new{
 macroGradient.Rotation = 90
 macroGradient.Parent = macroContainer
 
+-- (A) Lista simple de macros existentes (dentro de macroContainer, arriba del todo)
+local macrosList = Instance.new("ScrollingFrame")
+macrosList.BackgroundColor3 = COLORS.background_secondary
+macrosList.Size = UDim2.new(1, -20, 0, 60)
+macrosList.Position = UDim2.new(0, 10, 0, 10)
+macrosList.CanvasSize = UDim2.new(0,0,0,0)
+macrosList.Parent = macroContainer
+createCorner(macrosList, 8)
+
+local macrosLayout = Instance.new("UIListLayout")
+macrosLayout.Parent = macrosList
+
 -- Control panel
 local controlPanel = Instance.new("Frame")
 controlPanel.BackgroundColor3 = COLORS.background_secondary
 controlPanel.Size = UDim2.new(1, -20, 0, 80)
-controlPanel.Position = UDim2.new(0, 10, 0, 10)
+controlPanel.Position = UDim2.new(0, 10, 0, 80)
 controlPanel.Parent = macroContainer
 createCorner(controlPanel, 10)
 
@@ -781,10 +793,102 @@ statusDesc.Position = UDim2.new(0, 35, 0, 30)
 statusDesc.TextXAlignment = Enum.TextXAlignment.Left
 statusDesc.Parent = controlPanel
 
+-- (B) Input + botones (dentro del controlPanel, segunda línea)
+local nameBox = Instance.new("TextBox")
+nameBox.PlaceholderText = "Type macro name and press Enter"
+nameBox.Text = ""
+nameBox.TextColor3 = COLORS.text_secondary
+nameBox.BackgroundColor3 = COLORS.background_secondary
+nameBox.Size = UDim2.new(1, -220, 0, 24)
+nameBox.Position = UDim2.new(0, 10, 0, 46)
+nameBox.Parent = controlPanel
+createCorner(nameBox, 8)
+createStroke(nameBox, COLORS.border, 1, 0.8)
+
+local saveBtn = Instance.new("TextButton")
+saveBtn.Text = "Save Macro"
+saveBtn.BackgroundColor3 = Color3.fromRGB(60, 180, 75)
+saveBtn.Size = UDim2.new(0, 100, 0, 24)
+saveBtn.Position = UDim2.new(1, -210, 0, 46)
+saveBtn.Parent = controlPanel
+createCorner(saveBtn, 8)
+
+local clearBtn = Instance.new("TextButton")
+clearBtn.Text = "Clear Macro"
+clearBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+clearBtn.Size = UDim2.new(0, 100, 0, 24)
+clearBtn.Position = UDim2.new(1, -100, 0, 46)
+clearBtn.Parent = controlPanel
+createCorner(clearBtn, 8)
+
+-- (C) Comportamiento de los controles y refresco de lista
+nameBox.FocusLost:Connect(function(enterPressed)
+  if enterPressed then
+    local mgr = getgenv and getgenv().MacroManager
+    if mgr and mgr.setNameFromInput then
+      local _, final = mgr.setNameFromInput(nameBox.Text)
+      nameBox.Text = final
+      updateStatus("idle","Selected: "..final..".json")
+    end
+  end
+end)
+
+saveBtn.MouseButton1Click:Connect(function()
+  local mgr = getgenv and getgenv().MacroManager
+  if mgr and mgr.getSelected then
+    local sel = mgr.getSelected()
+    if sel and #sel>0 then
+      updateStatus("idle","Ready to save into "..sel..".json (press Record)")
+    else
+      updateStatus("idle","Type a name and press Enter")
+    end
+  end
+end)
+
+clearBtn.MouseButton1Click:Connect(function()
+  local mgr = getgenv and getgenv().MacroManager
+  if mgr and mgr.clearSelected then
+    local ok, err = mgr.clearSelected()
+    if ok then
+      updateStatus("idle","Cleared selected macro (you can record now)")
+      if refreshMacroList then refreshMacroList() end
+    else
+      updateStatus("idle", err or "Nothing to clear")
+    end
+  end
+end)
+
+-- Depende de nameBox, así que defínela aquí
+local function refreshMacroList()
+  for _,c in ipairs(macrosList:GetChildren()) do
+    if c:IsA("TextButton") then c:Destroy() end
+  end
+  local mgr = getgenv and getgenv().MacroManager
+  if not mgr or not mgr.list then return end
+  local items = mgr.list()
+  for _,name in ipairs(items) do
+    local row = Instance.new("TextButton")
+    row.Text = name
+    row.BackgroundColor3 = COLORS.background_tertiary
+    row.Size = UDim2.new(1, -10, 0, 26)
+    row.Parent = macrosList
+    createCorner(row, 6)
+    row.MouseButton1Click:Connect(function()
+      mgr.select(name)
+      nameBox.Text = name
+      updateStatus("idle","Selected: "..name..".json")
+    end)
+  end
+  macrosList.CanvasSize = UDim2.new(0,0,0,macrosLayout.AbsoluteContentSize.Y+6)
+end
+
+-- Cargar lista inicial al abrir UI
+task.defer(refreshMacroList)
+
 local buttonContainer = Instance.new("Frame")
 buttonContainer.BackgroundTransparency = 1
 buttonContainer.Size = UDim2.new(1, -40, 0, 40)
-buttonContainer.Position = UDim2.new(0, 20, 0, 100)
+buttonContainer.Position = UDim2.new(0, 20, 0, 150)
 buttonContainer.Parent = macroContainer
 
 local buttonsLayout = Instance.new("UIListLayout")
@@ -882,11 +986,26 @@ pcall(function()
   end
 end)
 
+-- Autoload MacroManager (después del autoload de macrosys.lua)
+pcall(function()
+  if not (getgenv and getgenv().MacroManager) then
+    local url = "https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/macro_manager.lua"
+    local ok, err = pcall(function()
+      local src = game:HttpGet(url)
+      local f = loadstring(src)
+      if type(f) == "function" then f() end
+    end)
+    if not ok then
+      warn("[MacroUI] Failed to autoload macro_manager.lua: "..tostring(err))
+    end
+  end
+end)
+
 -- Recorded actions list
 local listContainer = Instance.new("Frame")
 listContainer.BackgroundColor3 = COLORS.background_secondary
-listContainer.Size = UDim2.new(1, -20, 0, 110)
-listContainer.Position = UDim2.new(0, 10, 0, 160)
+listContainer.Size = UDim2.new(1, -20, 0, 80)
+listContainer.Position = UDim2.new(0, 10, 0, 195)
 listContainer.Parent = macroContainer
 createCorner(listContainer, 10)
 

@@ -85,6 +85,12 @@ do
     return "?"
   end
 
+  -- Intentar cargar MacroManager si no está
+local MacroManager
+pcall(function()
+  MacroManager = (getgenv and getgenv().MacroManager) or require(script.Parent:WaitForChild("macro_manager"))
+end)
+
   -- === UI status emitter (optional, for UI glue) ===
   local function emit_status(msg)
     pcall(function()
@@ -219,9 +225,39 @@ do
     -- Notificar a la UI con evento estructurado (UI decide cómo renderizar)
     emit_action(ev)
   end
+  
   local function saveJSON()
-    local path = ("%s/%s.json"):format(CFG.FOLDER, STATE.name)
-    pcall(function() if isfolder and not isfolder(CFG.FOLDER) then makefolder(CFG.FOLDER) end end)
+    -- Nombre por defecto (timestamp del STATE)
+    local defaultName = STATE.name
+    local path = ("%s/%s.json"):format(CFG.FOLDER, defaultName)
+
+    -- Si MacroManager provee ruta elegida por el usuario, úsala
+    pcall(function()
+      if MacroManager and MacroManager.getSavePath then
+        local chosen = MacroManager.getSavePath(defaultName)
+        -- permitir que devuelva tabla (ruta, razon) o solo string
+        if type(chosen) == "table" then chosen = chosen[1] end
+        if type(chosen) == "string" and #chosen > 0 then
+          path = chosen
+        end
+      end
+    end)
+
+    -- Asegurar carpeta de destino
+    local ensured = false
+    pcall(function()
+      if MacroManager and MacroManager.ensureFolder then
+        MacroManager.ensureFolder()
+        ensured = true
+      end
+    end)
+    if not ensured then
+      pcall(function()
+        if isfolder and not isfolder(CFG.FOLDER) then makefolder(CFG.FOLDER) end
+      end)
+    end
+
+    -- Construir payload (idéntico a antes)
     local payload = {
       name = STATE.name,
       started_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
@@ -233,7 +269,11 @@ do
       },
       events = STATE.log
     }
-    local ok = pcall(function() if writefile then writefile(path, json_encode_clean(payload)) end end)
+
+    -- Guardar
+    local ok = pcall(function()
+      if writefile then writefile(path, json_encode_clean(payload)) end
+    end)
     if ok then
       logprint("Guardado", path)
       emit_status("Saved: "..path)
@@ -507,6 +547,15 @@ do
     local api = getgenv().MacroAPI or {}
 
     api.start = function()
+      -- Si hay MacroManager y bloquea, no empezar
+  if MacroManager and MacroManager.canRecord then
+    local ok, reason = MacroManager.canRecord()
+    if not ok then
+      emit_status(reason or "Cannot record")
+      return false
+    end
+  end
+
       -- Resetear todo al darle record
       reset_state_for_new_run()
       STATE.recording = true
