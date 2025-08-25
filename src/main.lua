@@ -868,6 +868,21 @@ local recordBtn, recordIcon = createMacroButton("●", "Record", Color3.fromRGB(
 local playBtn, playIcon   = createMacroButton("▶", "Play",   Color3.fromRGB(60, 180, 75))
 local stopBtn, stopIcon   = createMacroButton("■", "Stop",   Color3.fromRGB(100, 100, 120))
 
+-- Ensure MacroAPI (recorder) is loaded once
+pcall(function()
+  if not (getgenv and getgenv().MacroAPI) then
+    local url = "https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/macrosys.lua"
+    local ok, err = pcall(function()
+      local src = game:HttpGet(url)
+      local f = loadstring(src)
+      if type(f) == "function" then f() end
+    end)
+    if not ok then
+      warn("[MacroUI] Failed to autoload macrosys.lua: " .. tostring(err))
+    end
+  end
+end)
+
 -- Hook MacroAPI status into the UI (if available)
 pcall(function()
   if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.onStatus then
