@@ -1058,6 +1058,156 @@ actionsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
   actionsList.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
 end)
 
+-- ===== AUTO REPLAY TOGGLE =====
+-- UI block (same look as Find Trait Burner)
+local autoReplayBox = Instance.new("Frame")
+autoReplayBox.Name = "AutoReplayBox"
+autoReplayBox.BackgroundColor3 = COLORS.background_secondary
+autoReplayBox.Size = UDim2.new(1, -20, 0, 110)
+autoReplayBox.Position = UDim2.new(0, 10, 0, 410) -- just below Recorded Actions
+autoReplayBox.Parent = macroContainer
+createCorner(autoReplayBox, 10)
+createStroke(autoReplayBox, COLORS.border, 1, 0.8)
+
+local arToggleContainer = Instance.new("Frame")
+arToggleContainer.BackgroundTransparency = 1
+arToggleContainer.Size = UDim2.new(1, -20, 0, 40)
+arToggleContainer.Position = UDim2.new(0, 10, 0, 10)
+arToggleContainer.Parent = autoReplayBox
+
+local arTitle = Instance.new("TextLabel")
+arTitle.Text = "Auto replay"
+arTitle.TextColor3 = COLORS.text_secondary
+arTitle.BackgroundTransparency = 1
+arTitle.Font = Enum.Font.SourceSansSemibold
+arTitle.TextSize = 16
+arTitle.Size = UDim2.new(0, 150, 1, 0)
+arTitle.Position = UDim2.new(0, 0, 0, 0)
+arTitle.TextXAlignment = Enum.TextXAlignment.Left
+arTitle.Parent = arToggleContainer
+
+local arSwitch = Instance.new("Frame")
+arSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+arSwitch.Size = UDim2.new(0, 50, 0, 26)
+arSwitch.Position = UDim2.new(1, -50, 0.5, 0)
+arSwitch.AnchorPoint = Vector2.new(1, 0.5)
+arSwitch.Parent = arToggleContainer
+createCorner(arSwitch, 13)
+
+local arKnob = Instance.new("Frame")
+arKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+arKnob.Size = UDim2.new(0, 22, 0, 22)
+arKnob.Position = UDim2.new(0, 2, 0.5, 0)
+arKnob.AnchorPoint = Vector2.new(0, 0.5)
+arKnob.Parent = arSwitch
+createCorner(arKnob, 11)
+
+local arDesc = Instance.new("TextLabel")
+arDesc.Text = "With this option you can repeat the macro indefinitely until it is disabled."
+arDesc.TextColor3 = COLORS.text_dim
+arDesc.BackgroundTransparency = 1
+arDesc.Font = Enum.Font.SourceSans
+arDesc.TextSize = 13
+arDesc.Size = UDim2.new(1, -20, 0, 40)
+arDesc.Position = UDim2.new(0, 10, 0, 55)
+arDesc.TextXAlignment = Enum.TextXAlignment.Left
+arDesc.TextYAlignment = Enum.TextYAlignment.Top
+arDesc.TextWrapped = true
+arDesc.Parent = autoReplayBox
+
+-- Logic state
+local AutoReplay = { enabled = false, task = nil }
+
+local function queryIsPlayingFromAPI()
+  local playing
+  pcall(function()
+    if getgenv and getgenv().MacroAPI then
+      if type(getgenv().MacroAPI.isPlaying) == "function" then
+        playing = getgenv().MacroAPI.isPlaying()
+      elseif type(getgenv().MacroAPI.status) == "function" then
+        local st = getgenv().MacroAPI.status()
+        if type(st) == "table" and st.playing ~= nil then
+          playing = st.playing
+        end
+      end
+    end
+  end)
+  return playing
+end
+
+local function ensureAutoReplayLoop()
+  if AutoReplay.task ~= nil then return end
+  AutoReplay.task = task.spawn(function()
+    while AutoReplay.enabled do
+      -- keep local isPlaying in sync if API exposes a signal/state
+      local apiPlaying = queryIsPlayingFromAPI()
+      if apiPlaying ~= nil then
+        isPlaying = apiPlaying and true or false
+      end
+
+      if not isRecording and not isPlaying then
+        -- Nothing is playing: start (or restart) playback
+        local usedAPI = false
+        pcall(function()
+          if getgenv and getgenv().MacroAPI then
+            if selectedMacroName and getgenv().MacroAPI.load then
+              getgenv().MacroAPI.load(selectedMacroName)
+            elseif selectedMacroName and getgenv().MacroManager and getgenv().MacroManager.select then
+              getgenv().MacroManager.select(selectedMacroName)
+            end
+            if getgenv().MacroAPI.play then
+              getgenv().MacroAPI.play()
+              usedAPI = true
+            elseif getgenv().MacroAPI.start then
+              getgenv().MacroAPI.start()
+              usedAPI = true
+            end
+          end
+        end)
+
+        if usedAPI then
+          isPlaying = true
+          updateStatus("playing", selectedMacroName and ("Playing: " .. tostring(selectedMacroName)) or "Playing recorded actions...")
+        else
+          -- Fallback: if there are items recorded in the UI, simulate a playback
+          local hasRows = false
+          for _, child in ipairs(actionsList:GetChildren()) do
+            if child:IsA("TextLabel") then hasRows = true break end
+          end
+          if hasRows then
+            isPlaying = true
+            updateStatus("playing", "Playing recorded actions...")
+            task.wait(3)
+            isPlaying = false
+            updateStatus("idle", "Playback complete")
+          end
+        end
+      end
+
+      task.wait(1.0)
+    end
+    AutoReplay.task = nil
+  end)
+end
+
+local function toggleAutoReplay()
+  AutoReplay.enabled = not AutoReplay.enabled
+  if AutoReplay.enabled then
+    TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
+    TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
+    ensureAutoReplayLoop()
+  else
+    TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
+    TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20, 20, 20)}):Play()
+  end
+end
+
+arSwitch.InputBegan:Connect(function(input)
+  if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    toggleAutoReplay()
+  end
+end)
+
 -- Macro state
 local isRecording = false
 local isPlaying = false
@@ -1274,6 +1424,7 @@ playBtn.MouseButton1Click:Connect(function()
   end)
 
   if usedAPI then
+    isPlaying = true
     updateStatus("playing", selectedMacroName and ("Playing: " .. tostring(selectedMacroName)) or "Playing recorded actions...")
     return
   end
