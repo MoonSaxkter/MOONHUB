@@ -100,7 +100,7 @@ gui.Parent = player.PlayerGui
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.BackgroundColor3 = COLORS.background_primary
-mainFrame.Size = UDim2.new(0, 600, 0, 450)
+mainFrame.Size = UDim2.new(0, 600, 0, 560)
 mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.Parent = gui
@@ -718,27 +718,22 @@ macroDesc.Parent = macroPage
 
 -- ===== MACRO RECORDER UI =====
 -- Main container with gradient background
-local macroContainer = Instance.new("Frame")
+local macroContainer = Instance.new("ScrollingFrame")
 macroContainer.Name = "MacroContainer"
 macroContainer.BackgroundColor3 = COLORS.background_tertiary
-macroContainer.Size = UDim2.new(1, 0, 0, 280)
+macroContainer.Size = UDim2.new(1, 0, 0, 400)
 macroContainer.Position = UDim2.new(0, 0, 0, 80)
 macroContainer.Parent = macroPage
+macroContainer.ScrollBarThickness = 6
+macroContainer.ScrollBarImageColor3 = COLORS.accent
+macroContainer.CanvasSize = UDim2.new(0, 0, 0, 600) -- altura del contenido scrolleable
+macroContainer.BorderSizePixel = 0
 createCorner(macroContainer, 12)
 createStroke(macroContainer, COLORS.border, 1, 0.8)
 
--- Add subtle gradient
-local macroGradient = Instance.new("UIGradient")
-macroGradient.Color = ColorSequence.new{
-  ColorSequenceKeypoint.new(0, COLORS.background_tertiary),
-  ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 30, 40))
-}
-macroGradient.Rotation = 90
-macroGradient.Parent = macroContainer
-
 -- Control panel
 local controlPanel = Instance.new("Frame")
-controlPanel.BackgroundColor3 = COLORS.background_secondary
+controlPanel.BackgroundColor3 = COLORS.background_primary
 controlPanel.Size = UDim2.new(1, -20, 0, 80)
 controlPanel.Position = UDim2.new(0, 10, 0, 10)
 controlPanel.Parent = macroContainer
@@ -884,7 +879,7 @@ end)
 
 -- Recorded actions list
 local listContainer = Instance.new("Frame")
-listContainer.BackgroundColor3 = COLORS.background_secondary
+listContainer.BackgroundColor3 = COLORS.background_primary
 listContainer.Size = UDim2.new(1, -20, 0, 110)
 listContainer.Position = UDim2.new(0, 10, 0, 160)
 listContainer.Parent = macroContainer
@@ -901,7 +896,7 @@ listHeader.Position = UDim2.new(0, 10, 0, 5)
 listHeader.Parent = listContainer
 
 local actionsList = Instance.new("ScrollingFrame")
-actionsList.BackgroundColor3 = COLORS.background_primary
+actionsList.BackgroundColor3 = COLORS.background_secondary
 actionsList.BorderSizePixel = 0
 actionsList.ScrollBarImageColor3 = COLORS.accent
 actionsList.ScrollBarImageTransparency = 0.5
