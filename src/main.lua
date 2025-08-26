@@ -724,7 +724,8 @@ macroContainer.BackgroundColor3 = COLORS.background_tertiary
 macroContainer.Size = UDim2.new(1, 0, 0, 400)
 macroContainer.Position = UDim2.new(0, 0, 0, 80)
 macroContainer.Parent = macroPage
-macroContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y  -- CanvasSize handled automatically
+macroContainer.AutomaticCanvasSize = Enum.AutomaticSize.None
+macroContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
 macroContainer.ScrollBarThickness = 6
 macroContainer.ScrollBarImageColor3 = COLORS.accent
 macroContainer.BorderSizePixel = 0
@@ -1207,6 +1208,285 @@ arSwitch.InputBegan:Connect(function(input)
     toggleAutoReplay()
   end
 end)
+
+-- ===== AUTO SELECT MACRO TOGGLE =====
+-- UI block (same look as Auto replay / Find Trait Burner)
+local autoSelectBox = Instance.new("Frame")
+autoSelectBox.Name = "AutoSelectBox"
+autoSelectBox.BackgroundColor3 = COLORS.background_secondary
+autoSelectBox.Size = UDim2.new(1, -20, 0, 130)
+autoSelectBox.Position = UDim2.new(0, 10, 0, 530) -- placed after Auto replay box
+autoSelectBox.Parent = macroContainer
+createCorner(autoSelectBox, 10)
+createStroke(autoSelectBox, COLORS.border, 1, 0.8)
+
+local asToggleContainer = Instance.new("Frame")
+asToggleContainer.BackgroundTransparency = 1
+asToggleContainer.Size = UDim2.new(1, -20, 0, 40)
+asToggleContainer.Position = UDim2.new(0, 10, 0, 10)
+asToggleContainer.Parent = autoSelectBox
+
+local asTitle = Instance.new("TextLabel")
+asTitle.Text = "Auto select macro"
+asTitle.TextColor3 = COLORS.text_secondary
+asTitle.BackgroundTransparency = 1
+asTitle.Font = Enum.Font.SourceSansSemibold
+asTitle.TextSize = 16
+asTitle.Size = UDim2.new(0, 200, 1, 0)
+asTitle.Position = UDim2.new(0, 0, 0, 0)
+asTitle.TextXAlignment = Enum.TextXAlignment.Left
+asTitle.Parent = asToggleContainer
+
+local asSwitch = Instance.new("Frame")
+asSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20) -- igual que el de Auto replay cuando está apagado
+asSwitch.Size = UDim2.new(0, 50, 0, 26)
+asSwitch.Position = UDim2.new(1, -50, 0.5, 0)
+asSwitch.AnchorPoint = Vector2.new(1, 0.5)
+asSwitch.Parent = asToggleContainer
+createCorner(asSwitch, 13)
+
+local asKnob = Instance.new("Frame")
+asKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+asKnob.Size = UDim2.new(0, 22, 0, 22)
+asKnob.Position = UDim2.new(0, 2, 0.5, 0)
+asKnob.AnchorPoint = Vector2.new(0, 0.5)
+asKnob.Parent = asSwitch
+createCorner(asKnob, 11)
+
+
+local asDesc = Instance.new("TextLabel")
+asDesc.Text = "With this option the script will choose the macro automatically depending on the map and the challenge *Do not enable Auto replay while this is active*."
+asDesc.TextColor3 = COLORS.text_dim
+asDesc.BackgroundTransparency = 1
+asDesc.Font = Enum.Font.SourceSans
+asDesc.TextSize = 13
+asDesc.Size = UDim2.new(1, -20, 0, 60)
+asDesc.Position = UDim2.new(0, 10, 0, 55)
+asDesc.TextXAlignment = Enum.TextXAlignment.Left
+asDesc.TextYAlignment = Enum.TextYAlignment.Top
+asDesc.TextWrapped = true
+asDesc.Parent = autoSelectBox
+
+-- ===== AUTO SELECT MACRO INFO PANEL =====
+-- Info panel explaining macro file naming
+local macroInfoPanel = Instance.new("Frame")
+macroInfoPanel.Name = "MacroInfoPanel"
+macroInfoPanel.BackgroundColor3 = COLORS.background_secondary
+macroInfoPanel.Size = UDim2.new(1, -20, 0, 300) -- fixed height to avoid AutomaticSize quirks in ScrollingFrame
+macroInfoPanel.Position = UDim2.new(0, 10, 0, 670)
+macroInfoPanel.Parent = macroContainer
+createCorner(macroInfoPanel, 10)
+createStroke(macroInfoPanel, COLORS.border, 1, 0.8)
+
+-- Header
+local macroInfoHeader = Instance.new("TextLabel")
+macroInfoHeader.BackgroundTransparency = 1
+macroInfoHeader.Text = "Macro Naming Rules"
+macroInfoHeader.TextColor3 = COLORS.text_secondary
+macroInfoHeader.Font = Enum.Font.SourceSansBold
+macroInfoHeader.TextSize = 16
+macroInfoHeader.Size = UDim2.new(1, -20, 0, 22)
+macroInfoHeader.Position = UDim2.new(0, 10, 0, 10)
+macroInfoHeader.TextXAlignment = Enum.TextXAlignment.Left
+macroInfoHeader.Parent = macroInfoPanel
+
+local macroInfoDivider = Instance.new("Frame")
+macroInfoDivider.BackgroundColor3 = COLORS.accent
+macroInfoDivider.BackgroundTransparency = 0.65
+macroInfoDivider.Size = UDim2.new(0, 120, 0, 2)
+macroInfoDivider.Position = UDim2.new(0, 10, 0, 34)
+macroInfoDivider.Parent = macroInfoPanel
+
+-- Body
+local macroInfoBody = Instance.new("TextLabel")
+macroInfoBody.Name = "MacroInfoBody"
+macroInfoBody.BackgroundTransparency = 1
+macroInfoBody.TextColor3 = COLORS.text_dim
+macroInfoBody.Font = Enum.Font.SourceSans
+macroInfoBody.TextSize = 15
+macroInfoBody.TextWrapped = true
+macroInfoBody.TextYAlignment = Enum.TextYAlignment.Top
+macroInfoBody.TextXAlignment = Enum.TextXAlignment.Left
+macroInfoBody.Size = UDim2.new(1, -20, 0, 250)
+macroInfoBody.Position = UDim2.new(0, 10, 0, 44)
+macroInfoBody.Parent = macroInfoPanel
+
+macroInfoBody.Text = [[To use Auto Select Macro, file names must follow this strict format:
+
+• General macros → [map_name]_general
+  Covers challenges:
+  - Flying enemies
+  - Juggernaut enemies
+  - Unsellable
+
+  Examples:
+  - city_of_york_general
+  - city_of_voldstanding_general
+
+• Special challenges → [map_name]_[challenge_type]
+  Challenge types:
+  - single_placement
+  - high_cost
+
+  Examples:
+  - hidden_storm_village_single_placement
+  - giant_island_high_cost
+
+Notes:
+- Use lowercase letters and underscores only.
+- Always end with _general, _single_placement, or _high_cost depending on the challenge.
+- If you need one macro per challenge, duplicate the map name with the correct suffix.]]
+
+-- Auto-size the Macro Naming Rules body/panel and keep the ScrollingFrame canvas in sync
+local function recomputeCanvas()
+  local maxY = 0
+  for _, c in ipairs(macroContainer:GetChildren()) do
+    if c:IsA("GuiObject") and c.Visible then
+      local bottom = c.Position.Y.Offset + c.Size.Y.Offset
+      if bottom > maxY then
+        maxY = bottom
+      end
+    end
+  end
+  -- add a small padding so it never clips at the very end
+  macroContainer.CanvasSize = UDim2.new(0, 0, 0, maxY + 20)
+end
+
+-- Let the body grow to its natural height and resize the panel accordingly
+macroInfoBody.AutomaticSize = Enum.AutomaticSize.Y
+macroInfoBody:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+  macroInfoPanel.Size = UDim2.new(1, -20, 0, macroInfoBody.AbsoluteSize.Y + 64)
+  recomputeCanvas()
+end)
+
+-- First sizing pass (after text is applied and AbsoluteSize is computed)
+task.defer(function()
+  macroInfoPanel.Size = UDim2.new(1, -20, 0, macroInfoBody.AbsoluteSize.Y + 64)
+  recomputeCanvas()
+end)
+
+-- Logic state
+local AutoSelect = { enabled = false, task = nil, lastPick = nil }
+
+local function getMapAndChallenge()
+  local mapName, challengeName
+  pcall(function()
+    -- Try to infer from Workspace
+    if workspace:FindFirstChild("Map") then
+      mapName = workspace.Map.Name
+    end
+    -- Use our FindTBModule memory if present
+    if FindTBModule and FindTBModule.state and FindTBModule.state.LAST_SELECTED then
+      challengeName = tostring(FindTBModule.state.LAST_SELECTED)
+    end
+    -- Try to read current open stage UI if available
+    local main = player.PlayerGui:FindFirstChild("MainUI", true)
+    if main then
+      local stage = main:FindFirstChild("StageScroll", true)
+      if stage and stage.Parent and stage.Parent:FindFirstChild("Title") and stage.Parent.Title:IsA("TextLabel") then
+        local t = stage.Parent.Title.Text
+        if t and #t > 0 then mapName = t end
+      end
+    end
+  end)
+  return (mapName and mapName:lower() or nil), (challengeName and challengeName:lower() or nil)
+end
+
+local function chooseMacroForContext()
+  local list
+  pcall(function()
+    if getgenv and getgenv().MacroManager and getgenv().MacroManager.list then
+      list = getgenv().MacroManager.list()
+    elseif getgenv and getgenv().MacroAPI and getgenv().MacroAPI.list then
+      list = getgenv().MacroAPI.list()
+    end
+  end)
+  if type(list) ~= "table" or #list == 0 then return nil end
+
+  local map, chal = getMapAndChallenge()
+  local best, bestScore
+  for _, name in ipairs(list) do
+    local n = tostring(name):lower()
+    local score = 0
+    if map and n:find(map, 1, true) then score = score + #map end
+    if chal and n:find(chal, 1, true) then score = score + #chal end
+    if n:find("challenge", 1, true) and chal == nil then score = score + 3 end
+    if score > 0 and (not bestScore or score > bestScore) then
+      best, bestScore = name, score
+    end
+  end
+  return best
+end
+
+local function applySelectedMacro(name)
+  if not name then return end
+  selectedMacroName = name
+  selectBtn.Text = name .. " ▾"
+  -- Notify external API of selection if supported
+  pcall(function()
+    if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.load then
+      getgenv().MacroAPI.load(name)
+    elseif getgenv and getgenv().MacroManager and getgenv().MacroManager.select then
+      getgenv().MacroManager.select(name)
+    end
+  end)
+end
+
+local function ensureAutoSelectLoop()
+  if AutoSelect.task ~= nil then return end
+  AutoSelect.task = task.spawn(function()
+    while AutoSelect.enabled do
+      local pick = chooseMacroForContext()
+      if pick and pick ~= AutoSelect.lastPick then
+        AutoSelect.lastPick = pick
+        applySelectedMacro(pick)
+        updateStatus("idle", "Auto selected: " .. tostring(pick))
+      end
+      task.wait(2.0)
+    end
+    AutoSelect.task = nil
+  end)
+end
+
+local function toggleAutoSelect()
+  AutoSelect.enabled = not AutoSelect.enabled
+  if AutoSelect.enabled then
+    -- If Auto replay is on, turn it off to avoid conflicts
+    if AutoReplay and AutoReplay.enabled then
+      toggleAutoReplay()
+    end
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -24, 0.5, 0)}):Play()
+    TweenService:Create(asSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
+    -- Immediate pick once enabled
+    local initial = chooseMacroForContext()
+    if initial then applySelectedMacro(initial) end
+    ensureAutoSelectLoop()
+  else
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(0, 2, 0.5, 0)}):Play()
+    TweenService:Create(asSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20, 20, 20)}):Play()
+  end
+end
+
+asSwitch.InputBegan:Connect(function(input)
+  if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    toggleAutoSelect()
+  end
+end)
+
+-- Prevent enabling Auto replay while Auto select is active
+local oldToggleAutoReplay = toggleAutoReplay
+function toggleAutoReplay()
+  if AutoSelect and AutoSelect.enabled then
+    updateStatus("idle", "Disable Auto select macro first")
+    -- Brief flash feedback on the Auto replay switch
+    TweenService:Create(arSwitch, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(220,80,80)}):Play()
+    task.delay(0.2, function()
+      TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = (AutoReplay.enabled and COLORS.accent) or Color3.fromRGB(20,20,20)}):Play()
+    end)
+    return
+  end
+  oldToggleAutoReplay()
+end
 
 -- Macro state
 local isRecording = false
