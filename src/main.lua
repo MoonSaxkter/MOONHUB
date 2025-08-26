@@ -724,10 +724,11 @@ macroContainer.BackgroundColor3 = COLORS.background_tertiary
 macroContainer.Size = UDim2.new(1, 0, 0, 400)
 macroContainer.Position = UDim2.new(0, 0, 0, 80)
 macroContainer.Parent = macroPage
+macroContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y  -- CanvasSize handled automatically
 macroContainer.ScrollBarThickness = 6
 macroContainer.ScrollBarImageColor3 = COLORS.accent
-macroContainer.CanvasSize = UDim2.new(0, 0, 0, 600) -- altura del contenido scrolleable
 macroContainer.BorderSizePixel = 0
+macroContainer.ClipsDescendants = true
 createCorner(macroContainer, 12)
 createStroke(macroContainer, COLORS.border, 1, 0.8)
 
@@ -737,6 +738,7 @@ controlPanel.BackgroundColor3 = COLORS.background_primary
 controlPanel.Size = UDim2.new(1, -20, 0, 80)
 controlPanel.Position = UDim2.new(0, 10, 0, 10)
 controlPanel.Parent = macroContainer
+createStroke(controlPanel, COLORS.border, 1, 0.8)
 createCorner(controlPanel, 10)
 
 -- Status indicator
@@ -765,6 +767,7 @@ statusText.Position = UDim2.new(0, 35, 0, 10)
 statusText.TextXAlignment = Enum.TextXAlignment.Left
 statusText.Parent = controlPanel
 
+
 local statusDesc = Instance.new("TextLabel")
 statusDesc.Text = "Ready to record"
 statusDesc.TextColor3 = COLORS.text_dim
@@ -776,10 +779,151 @@ statusDesc.Position = UDim2.new(0, 35, 0, 30)
 statusDesc.TextXAlignment = Enum.TextXAlignment.Left
 statusDesc.Parent = controlPanel
 
+-- ===== MACRO PICKER (Dropdown) =====
+local selectedMacroName = nil
+
+local macroPicker = Instance.new("Frame")
+macroPicker.Name = "MacroPicker"
+macroPicker.BackgroundColor3 = COLORS.background_primary
+macroPicker.Size = UDim2.new(1, -20, 0, 56)
+macroPicker.Position = UDim2.new(0, 10, 0, 100)
+macroPicker.Parent = macroContainer
+macroPicker.ClipsDescendants = false
+macroPicker.ZIndex = 50
+createCorner(macroPicker, 10)
+createStroke(macroPicker, COLORS.border, 1, 0.8)
+
+local pickerLabel = Instance.new("TextLabel")
+pickerLabel.BackgroundTransparency = 1
+pickerLabel.Text = "Select macro file"
+pickerLabel.TextColor3 = COLORS.text_dim
+pickerLabel.Font = Enum.Font.SourceSansBold
+pickerLabel.TextSize = 12
+pickerLabel.Size = UDim2.new(1, -20, 0, 16)
+pickerLabel.Position = UDim2.new(0, 10, 0, 4)
+pickerLabel.TextXAlignment = Enum.TextXAlignment.Left
+pickerLabel.Parent = macroPicker
+
+local selectBtn = Instance.new("TextButton")
+selectBtn.Name = "SelectMacroButton"
+selectBtn.Text = "Choose macro"
+selectBtn.AutoButtonColor = false
+selectBtn.BackgroundColor3 = COLORS.background_secondary
+selectBtn.TextColor3 = Color3.new(1,1,1)
+selectBtn.Font = Enum.Font.SourceSansSemibold
+selectBtn.TextSize = 14
+selectBtn.Size = UDim2.new(1, -20, 0, 28)
+selectBtn.Position = UDim2.new(0, 10, 0, 14)
+selectBtn.Parent = macroPicker
+selectBtn.ZIndex = 55
+createCorner(selectBtn, 8)
+createStroke(selectBtn, COLORS.border, 1, 0.7)
+
+local dropdownList = Instance.new("ScrollingFrame")
+dropdownList.Name = "DropdownList"
+dropdownList.BackgroundColor3 = COLORS.background_secondary
+dropdownList.BorderSizePixel = 0
+dropdownList.Visible = false
+dropdownList.ZIndex = 60
+dropdownList.ScrollBarThickness = 4
+dropdownList.ScrollBarImageColor3 = COLORS.accent
+dropdownList.Size = UDim2.new(1, -20, 0, 150)
+dropdownList.Position = UDim2.new(0, 10, 0, 40)
+dropdownList.Parent = macroPicker
+dropdownList.ClipsDescendants = false
+createCorner(dropdownList, 8)
+createStroke(dropdownList, COLORS.border, 1, 0.7)
+
+local dropdownLayout = Instance.new("UIListLayout")
+dropdownLayout.SortOrder = Enum.SortOrder.LayoutOrder
+dropdownLayout.Padding = UDim.new(0, 4)
+dropdownLayout.Parent = dropdownList
+
+local function clearDropdownItems()
+  for _, child in ipairs(dropdownList:GetChildren()) do
+    if child:IsA("TextButton") then
+      child:Destroy()
+    end
+  end
+end
+
+local function addDropdownItem(text)
+  local item = Instance.new("TextButton")
+  item.Text = text
+  item.AutoButtonColor = false
+  item.BackgroundColor3 = COLORS.background_tertiary
+  item.TextColor3 = Color3.new(1,1,1)
+  item.Font = Enum.Font.SourceSans
+  item.TextSize = 14
+  item.Size = UDim2.new(1, -8, 0, 26)
+  item.Position = UDim2.new(0, 4, 0, 0)
+  item.Parent = dropdownList
+  createCorner(item, 6)
+  item.MouseEnter:Connect(function()
+    TweenService:Create(item, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
+  end)
+  item.MouseLeave:Connect(function()
+    TweenService:Create(item, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.background_tertiary}):Play()
+  end)
+  item.MouseButton1Click:Connect(function()
+    selectedMacroName = text
+    selectBtn.Text = text .. " ▾"
+    dropdownList.Visible = false
+  end)
+end
+
+local function refreshMacroList()
+  clearDropdownItems()
+  local list = nil
+  local ok = pcall(function()
+    if getgenv and getgenv().MacroManager and getgenv().MacroManager.list then
+      list = getgenv().MacroManager.list()
+    elseif getgenv and getgenv().MacroAPI and getgenv().MacroAPI.list then
+      list = getgenv().MacroAPI.list()
+    end
+  end)
+
+  if ok and type(list) == "table" and #list > 0 then
+    for _, name in ipairs(list) do
+      if type(name) == "string" and #name > 0 then
+        addDropdownItem(name)
+      end
+    end
+  else
+    addDropdownItem("No macros found")
+  end
+
+  -- Ajusta el canvas al contenido real
+  task.defer(function()
+    dropdownList.CanvasSize = UDim2.new(0, 0, 0, dropdownLayout.AbsoluteContentSize.Y + 8)
+  end)
+end
+
+selectBtn.MouseButton1Click:Connect(function()
+  if dropdownList.Visible then
+    dropdownList.Visible = false
+  else
+    refreshMacroList()
+    dropdownList.Visible = true
+  end
+end)
+
+-- Cerrar dropdown al hacer click fuera del área
+UIS.InputBegan:Connect(function(input)
+  if input.UserInputType == Enum.UserInputType.MouseButton1 and dropdownList.Visible then
+    local pos = input.Position
+    local topLeft = dropdownList.AbsolutePosition
+    local bottomRight = topLeft + dropdownList.AbsoluteSize
+    if not (pos.X >= topLeft.X and pos.X <= bottomRight.X and pos.Y >= topLeft.Y and pos.Y <= bottomRight.Y) then
+      dropdownList.Visible = false
+    end
+  end
+end)
+
 local buttonContainer = Instance.new("Frame")
 buttonContainer.BackgroundTransparency = 1
 buttonContainer.Size = UDim2.new(1, -40, 0, 40)
-buttonContainer.Position = UDim2.new(0, 20, 0, 100)
+buttonContainer.Position = UDim2.new(0, 20, 0, 170)
 buttonContainer.Parent = macroContainer
 
 local buttonsLayout = Instance.new("UIListLayout")
@@ -879,9 +1023,9 @@ end)
 
 -- Recorded actions list
 local listContainer = Instance.new("Frame")
-listContainer.BackgroundColor3 = COLORS.background_primary
-listContainer.Size = UDim2.new(1, -20, 0, 110)
-listContainer.Position = UDim2.new(0, 10, 0, 160)
+listContainer.BackgroundColor3 = COLORS.background_secondary
+listContainer.Size = UDim2.new(1, -20, 0, 180)
+listContainer.Position = UDim2.new(0, 10, 0, 220)
 listContainer.Parent = macroContainer
 createCorner(listContainer, 10)
 
@@ -896,7 +1040,7 @@ listHeader.Position = UDim2.new(0, 10, 0, 5)
 listHeader.Parent = listContainer
 
 local actionsList = Instance.new("ScrollingFrame")
-actionsList.BackgroundColor3 = COLORS.background_secondary
+actionsList.BackgroundColor3 = COLORS.background_primary
 actionsList.BorderSizePixel = 0
 actionsList.ScrollBarImageColor3 = COLORS.accent
 actionsList.ScrollBarImageTransparency = 0.5
@@ -1106,12 +1250,40 @@ stopBtn.MouseButton1Click:Connect(function()
 end)
 
 playBtn.MouseButton1Click:Connect(function()
-  if not isRecording and not isPlaying and #actionsList:GetChildren() > 0 then
+  if isRecording or isPlaying then return end
+
+  -- Intentar cargar y reproducir usando MacroAPI/MacroManager si existen
+  local usedAPI = false
+  pcall(function()
+    if getgenv and getgenv().MacroAPI then
+      -- Cargar el archivo seleccionado si la API lo soporta
+      if selectedMacroName and getgenv().MacroAPI.load then
+        getgenv().MacroAPI.load(selectedMacroName)
+      elseif selectedMacroName and getgenv().MacroManager and getgenv().MacroManager.select then
+        getgenv().MacroManager.select(selectedMacroName)
+      end
+      if getgenv().MacroAPI.play then
+        getgenv().MacroAPI.play()
+        usedAPI = true
+      elseif getgenv().MacroAPI.start then
+        -- Algunas implementaciones usan start() para iniciar playback
+        getgenv().MacroAPI.start()
+        usedAPI = true
+      end
+    end
+  end)
+
+  if usedAPI then
+    updateStatus("playing", selectedMacroName and ("Playing: " .. tostring(selectedMacroName)) or "Playing recorded actions...")
+    return
+  end
+
+  -- Fallback: simulación como antes
+  if #actionsList:GetChildren() > 0 then
     isPlaying = true
     updateStatus("playing", "Playing recorded actions...")
-    
     task.spawn(function()
-      wait(3) -- Simulate playback
+      wait(3)
       isPlaying = false
       updateStatus("idle", "Playback complete")
     end)
