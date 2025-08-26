@@ -818,6 +818,25 @@ local function sanitizeName(s)
   return s
 end
 
+-- add delete-file binding
+do
+  local g = getgenv and getgenv() or _G or {}
+  FS.delfile   = FS.delfile or (rawget(g, "delfile") or (rawget(g, "syn") and g.syn.delfile) or (rawget(g, "krnl") and g.krnl.delfile))
+end
+
+local function resolveMacroPath(name)
+  if not name or #tostring(name) == 0 then return nil end
+  local n = tostring(name)
+  -- if it already looks like a full path to a .json, use it directly
+  if n:match("%.json$") and (n:find("/") or n:find("\\")) then
+    return n
+  end
+  ensureFolder("Moon_Macros")
+  -- keep only the basename, drop extension, then build our default path
+  local base = strip_json(basename(n) or n)
+  return "Moon_Macros/" .. base .. ".json"
+end
+
 -- ===== MACRO PICKER (Dropdown) =====
 local selectedMacroName = nil
 local macroIndex = {} -- displayName -> fullPath
@@ -1045,23 +1064,15 @@ buttonsLayout.Parent = buttonContainer
 local function createMacroButton(icon, text, color)
   local button = Instance.new("TextButton")
   button.Text = ""
-  button.BackgroundColor3 = color
+  button.BackgroundColor3 = COLORS.background_secondary
   button.Size = UDim2.new(0, 110, 0, 40)
   button.Position = UDim2.new(0, 0, 0, 0)
   button.AutoButtonColor = false
   button.Parent = buttonContainer
   createCorner(button, 10)
-  
-  -- Button shadow
-  local shadow = Instance.new("Frame")
-  shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-  shadow.BackgroundTransparency = 0.7
-  shadow.Size = UDim2.new(1, 4, 1, 4)
-  shadow.Position = UDim2.new(0, 2, 0, 2)
-  shadow.ZIndex = button.ZIndex - 1
-  shadow.Parent = button
-  createCorner(shadow, 10)
-  
+  -- Use provided color as stroke if given, fallback to COLORS.border
+  local stroke = createStroke(button, color or COLORS.border, 1, 0.3)
+
   -- Icon
   local iconLabel = Instance.new("TextLabel")
   iconLabel.Text = icon
@@ -1072,7 +1083,7 @@ local function createMacroButton(icon, text, color)
   iconLabel.Size = UDim2.new(0, 30, 1, 0)
   iconLabel.Position = UDim2.new(0, 10, 0, 0)
   iconLabel.Parent = button
-  
+
   -- Text
   local textLabel = Instance.new("TextLabel")
   textLabel.Text = text
@@ -1084,36 +1095,29 @@ local function createMacroButton(icon, text, color)
   textLabel.Position = UDim2.new(0, 35, 0, 0)
   textLabel.TextXAlignment = Enum.TextXAlignment.Left
   textLabel.Parent = button
-  
-  -- Hover effect
+
+  -- Hover / press effects matching the rest of the UI
   button.MouseEnter:Connect(function()
-    TweenService:Create(button, TweenInfo.new(0.2), {
-      Size = UDim2.new(0, 114, 0, 43),
-      BackgroundTransparency = 0.1
-    }):Play()
-    TweenService:Create(shadow, TweenInfo.new(0.2), {
-      Size = UDim2.new(1, 6, 1, 6),
-      Position = UDim2.new(0, 3, 0, 3)
-    }):Play()
+    TweenService:Create(button, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
+    TweenService:Create(stroke, TweenInfo.new(0.12), {Color = COLORS.accent}):Play()
   end)
-  
   button.MouseLeave:Connect(function()
-    TweenService:Create(button, TweenInfo.new(0.2), {
-      Size = UDim2.new(0, 110, 0, 40),
-      BackgroundTransparency = 0
-    }):Play()
-    TweenService:Create(shadow, TweenInfo.new(0.2), {
-      Size = UDim2.new(1, 4, 1, 4),
-      Position = UDim2.new(0, 2, 0, 2)
-    }):Play()
+    TweenService:Create(button, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.background_secondary}):Play()
+    TweenService:Create(stroke, TweenInfo.new(0.12), {Color = color or COLORS.border}):Play()
   end)
-  
+  button.MouseButton1Down:Connect(function()
+    TweenService:Create(button, TweenInfo.new(0.08), {BackgroundColor3 = COLORS.background_secondary}):Play()
+  end)
+  button.MouseButton1Up:Connect(function()
+    TweenService:Create(button, TweenInfo.new(0.08), {BackgroundColor3 = COLORS.button_hover}):Play()
+  end)
+
   return button, iconLabel
 end
 
 local recordBtn, recordIcon = createMacroButton("●", "Record", Color3.fromRGB(220, 60, 60))
 local playBtn, playIcon   = createMacroButton("▶", "Play",   Color3.fromRGB(60, 180, 75))
-local stopBtn, stopIcon   = createMacroButton("■", "Stop",   Color3.fromRGB(100, 100, 120))
+local stopBtn, stopIcon   = createMacroButton("■", "Stop",   Color3.fromRGB(80, 120, 220))
 
 -- Ensure MacroAPI (recorder) is loaded once
 pcall(function()
@@ -1252,6 +1256,112 @@ nameInput.FocusLost:Connect(function(enterPressed)
   end
 end)
 
+-- ===== FILE ACTION BUTTONS (below Create new macro file) =====
+local fileButtonsBox = Instance.new("Frame")
+fileButtonsBox.Name = "FileButtonsBox"
+fileButtonsBox.BackgroundColor3 = COLORS.background_secondary
+fileButtonsBox.Size = UDim2.new(1, -20, 0, 60)
+fileButtonsBox.Position = UDim2.new(0, 10, 0, 490)
+fileButtonsBox.Parent = macroContainer
+createCorner(fileButtonsBox, 10)
+createStroke(fileButtonsBox, COLORS.border, 1, 0.8)
+
+local fbLayout = Instance.new("UIListLayout")
+fbLayout.FillDirection = Enum.FillDirection.Horizontal
+fbLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+fbLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+fbLayout.Padding = UDim.new(0, 12)
+fbLayout.Parent = fileButtonsBox
+
+local function smallActionButton(text, strokeColor, fillColor)
+  local b = Instance.new("TextButton")
+  b.Text = text
+  b.AutoButtonColor = false
+  b.BackgroundColor3 = fillColor or COLORS.background_tertiary
+  b.TextColor3 = COLORS.text_secondary
+  b.Font = Enum.Font.SourceSansSemibold
+  b.TextSize = 14
+  b.Size = UDim2.new(0, 150, 0, 36)
+  b.Parent = fileButtonsBox
+  createCorner(b, 8)
+  local stroke = createStroke(b, strokeColor or COLORS.border, 1, 0.3)
+
+  b.MouseEnter:Connect(function()
+    TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
+    TweenService:Create(stroke, TweenInfo.new(0.12), {Color = strokeColor or COLORS.accent}):Play()
+  end)
+  b.MouseLeave:Connect(function()
+    TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = fillColor or COLORS.background_tertiary}):Play()
+    TweenService:Create(stroke, TweenInfo.new(0.12), {Color = strokeColor or COLORS.border}):Play()
+  end)
+  b.MouseButton1Down:Connect(function()
+    TweenService:Create(b, TweenInfo.new(0.08), {BackgroundColor3 = COLORS.background_secondary}):Play()
+  end)
+  b.MouseButton1Up:Connect(function()
+    TweenService:Create(b, TweenInfo.new(0.08), {BackgroundColor3 = COLORS.button_hover}):Play()
+  end)
+
+  return b
+end
+
+local wipeBtn   = smallActionButton("Wipe macro", COLORS.accent)
+local deleteBtn = smallActionButton("Delete macro", Color3.fromRGB(220, 90, 90))
+
+local function resetSelection()
+  selectedMacroName = nil
+  selectBtn.Text = "Choose macro"
+end
+
+local function wipeSelectedMacro()
+  if not FS.writefile then
+    updateStatus("idle", "Filesystem not supported by your executor")
+    return
+  end
+  local path = resolveMacroPath(selectedMacroName)
+  if not path then
+    updateStatus("idle", "Select a macro first")
+    return
+  end
+  local ok, err = pcall(function()
+    FS.writefile(path, "")
+  end)
+  if ok then
+    updateStatus("idle", "Wiped: " .. path)
+  else
+    updateStatus("idle", "Error wiping file: " .. tostring(err))
+  end
+end
+
+local function deleteSelectedMacro()
+  if not FS.delfile then
+    updateStatus("idle", "Delete not supported by your executor")
+    return
+  end
+  local path = resolveMacroPath(selectedMacroName)
+  if not path then
+    updateStatus("idle", "Select a macro first")
+    return
+  end
+  local ok, err = pcall(function()
+    FS.delfile(path)
+  end)
+  if ok then
+    updateStatus("idle", "Deleted: " .. path)
+    resetSelection()
+    pcall(refreshMacroList)
+  else
+    updateStatus("idle", "Error deleting file: " .. tostring(err))
+  end
+end
+
+wipeBtn.MouseButton1Click:Connect(function()
+  wipeSelectedMacro()
+end)
+
+deleteBtn.MouseButton1Click:Connect(function()
+  deleteSelectedMacro()
+end)
+
 -- ===== AUTO REPLAY TOGGLE =====
 -- Macro state (declared early so upvalues exist)
 local isRecording = false
@@ -1262,7 +1372,7 @@ local autoReplayBox = Instance.new("Frame")
 autoReplayBox.Name = "AutoReplayBox"
 autoReplayBox.BackgroundColor3 = COLORS.background_secondary
 autoReplayBox.Size = UDim2.new(1, -20, 0, 110)
-autoReplayBox.Position = UDim2.new(0, 10, 0, 500) -- just below new macro input
+autoReplayBox.Position = UDim2.new(0, 10, 0, 560) -- moved down to make room for file buttons
 autoReplayBox.Parent = macroContainer
 createCorner(autoReplayBox, 10)
 createStroke(autoReplayBox, COLORS.border, 1, 0.8)
@@ -1412,7 +1522,7 @@ local autoSelectBox = Instance.new("Frame")
 autoSelectBox.Name = "AutoSelectBox"
 autoSelectBox.BackgroundColor3 = COLORS.background_secondary
 autoSelectBox.Size = UDim2.new(1, -20, 0, 130)
-autoSelectBox.Position = UDim2.new(0, 10, 0, 630) -- placed after Auto replay box
+autoSelectBox.Position = UDim2.new(0, 10, 0, 700) -- moved down to make room for file buttons/auto replay
 autoSelectBox.Parent = macroContainer
 createCorner(autoSelectBox, 10)
 createStroke(autoSelectBox, COLORS.border, 1, 0.8)
@@ -1470,7 +1580,7 @@ local macroInfoPanel = Instance.new("Frame")
 macroInfoPanel.Name = "MacroInfoPanel"
 macroInfoPanel.BackgroundColor3 = COLORS.background_secondary
 macroInfoPanel.Size = UDim2.new(1, -20, 0, 300) -- fixed height to avoid AutomaticSize quirks in ScrollingFrame
-macroInfoPanel.Position = UDim2.new(0, 10, 0, 770)
+macroInfoPanel.Position = UDim2.new(0, 10, 0, 840) -- moved down to make room for file buttons/auto replay/auto select
 macroInfoPanel.Parent = macroContainer
 createCorner(macroInfoPanel, 10)
 createStroke(macroInfoPanel, COLORS.border, 1, 0.8)
