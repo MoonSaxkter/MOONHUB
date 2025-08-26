@@ -1055,8 +1055,129 @@ createCorner(actionsList, 8)
 local actionsLayout = Instance.new("UIListLayout")
 actionsLayout.Padding = UDim.new(0, 2)
 actionsLayout.Parent = actionsList
+
 actionsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
   actionsList.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
+end)
+
+-- ===== NEW MACRO NAME INPUT (Create JSON) =====
+-- UI block placed above Auto replay
+local newMacroBox = Instance.new("Frame")
+newMacroBox.Name = "NewMacroBox"
+newMacroBox.BackgroundColor3 = COLORS.background_secondary
+newMacroBox.Size = UDim2.new(1, -20, 0, 72)
+newMacroBox.Position = UDim2.new(0, 10, 0, 410)
+newMacroBox.Parent = macroContainer
+createCorner(newMacroBox, 10)
+createStroke(newMacroBox, COLORS.border, 1, 0.8)
+
+local nmTitle = Instance.new("TextLabel")
+nmTitle.Text = "Create new macro file"
+nmTitle.TextColor3 = COLORS.text_secondary
+nmTitle.BackgroundTransparency = 1
+nmTitle.Font = Enum.Font.SourceSansSemibold
+nmTitle.TextSize = 16
+nmTitle.Size = UDim2.new(1, -20, 0, 22)
+nmTitle.Position = UDim2.new(0, 10, 0, 8)
+nmTitle.TextXAlignment = Enum.TextXAlignment.Left
+nmTitle.Parent = newMacroBox
+
+local nameInput = Instance.new("TextBox")
+nameInput.Name = "NameInput"
+nameInput.ClearTextOnFocus = false
+nameInput.PlaceholderText = "new macro name"
+nameInput.Text = ""
+nameInput.TextColor3 = Color3.new(1,1,1)
+nameInput.PlaceholderColor3 = COLORS.text_dim
+nameInput.Font = Enum.Font.SourceSans
+nameInput.TextSize = 14
+nameInput.BackgroundColor3 = COLORS.background_primary
+nameInput.Size = UDim2.new(1, -20, 0, 30)
+nameInput.Position = UDim2.new(0, 10, 0, 38)
+nameInput.Parent = newMacroBox
+createCorner(nameInput, 8)
+createStroke(nameInput, COLORS.border, 1, 0.7)
+
+local nmHint = Instance.new("TextLabel")
+nmHint.BackgroundTransparency = 1
+nmHint.Text = "Press Enter to create: Moon_Macros/<name>.json"
+nmHint.TextColor3 = COLORS.text_dim
+nmHint.Font = Enum.Font.SourceSans
+nmHint.TextSize = 12
+nmHint.Size = UDim2.new(1, -20, 0, 18)
+nmHint.Position = UDim2.new(0, 10, 0, 72)
+nmHint.TextXAlignment = Enum.TextXAlignment.Left
+nmHint.Parent = newMacroBox
+
+-- cross-executor filesystem helpers
+local FS = {}
+do
+  local g = getgenv and getgenv() or _G or {}
+  FS.writefile = rawget(g, "writefile") or (rawget(g, "syn") and g.syn.writefile) or (rawget(g, "krnl") and g.krnl.writefile)
+  FS.appendfile = rawget(g, "appendfile") or (rawget(g, "syn") and g.syn.appendfile)
+  FS.isfile = rawget(g, "isfile") or (rawget(g, "syn") and g.syn.isfile)
+  FS.isfolder = rawget(g, "isfolder") or (rawget(g, "syn") and g.syn.isfolder)
+  FS.makefolder = rawget(g, "makefolder") or (rawget(g, "syn") and g.syn.makefolder)
+end
+
+local function ensureFolder(path)
+  if FS.isfolder and not FS.isfolder(path) then
+    pcall(FS.makefolder, path)
+  elseif FS.makefolder then
+    pcall(FS.makefolder, path)
+  end
+end
+
+local function sanitizeName(s)
+  s = tostring(s or ""):lower()
+  s = s:gsub("[^a-z0-9_]", "_")
+  s = s:gsub("_+", "_")
+  s = s:gsub("^_+", ""):gsub("_+$", "")
+  return s
+end
+
+local function createMacroJson(rawName)
+  if not FS.writefile then
+    updateStatus("idle", "Filesystem not supported by your executor")
+    return
+  end
+  local base = sanitizeName(rawName)
+  if #base == 0 then
+    updateStatus("idle", "Enter a valid name")
+    return
+  end
+  ensureFolder("Moon_Macros")
+  local filePath = "Moon_Macros/" .. base
+  if not filePath:match("%.json$") then
+    filePath = filePath .. ".json"
+  end
+
+  -- if exists, add numeric suffix
+  local finalPath = filePath
+  if FS.isfile and FS.isfile(finalPath) then
+    local i = 2
+    while FS.isfile("Moon_Macros/" .. base .. "_" .. i .. ".json") do
+      i += 1
+    end
+    finalPath = "Moon_Macros/" .. base .. "_" .. i .. ".json"
+  end
+
+  local template = ""
+
+  local ok, err = pcall(FS.writefile, finalPath, template)
+  if ok then
+    updateStatus("idle", "Created: " .. finalPath)
+    pcall(refreshMacroList)
+  else
+    updateStatus("idle", "Error creating file: " .. tostring(err))
+  end
+end
+
+-- Enter on PC & mobile keyboards
+nameInput.FocusLost:Connect(function(enterPressed)
+  if enterPressed then
+    createMacroJson(nameInput.Text)
+  end
 end)
 
 -- ===== AUTO REPLAY TOGGLE =====
@@ -1065,7 +1186,7 @@ local autoReplayBox = Instance.new("Frame")
 autoReplayBox.Name = "AutoReplayBox"
 autoReplayBox.BackgroundColor3 = COLORS.background_secondary
 autoReplayBox.Size = UDim2.new(1, -20, 0, 110)
-autoReplayBox.Position = UDim2.new(0, 10, 0, 410) -- just below Recorded Actions
+autoReplayBox.Position = UDim2.new(0, 10, 0, 500) -- just below new macro input
 autoReplayBox.Parent = macroContainer
 createCorner(autoReplayBox, 10)
 createStroke(autoReplayBox, COLORS.border, 1, 0.8)
@@ -1215,7 +1336,7 @@ local autoSelectBox = Instance.new("Frame")
 autoSelectBox.Name = "AutoSelectBox"
 autoSelectBox.BackgroundColor3 = COLORS.background_secondary
 autoSelectBox.Size = UDim2.new(1, -20, 0, 130)
-autoSelectBox.Position = UDim2.new(0, 10, 0, 530) -- placed after Auto replay box
+autoSelectBox.Position = UDim2.new(0, 10, 0, 630) -- placed after Auto replay box
 autoSelectBox.Parent = macroContainer
 createCorner(autoSelectBox, 10)
 createStroke(autoSelectBox, COLORS.border, 1, 0.8)
@@ -1273,7 +1394,7 @@ local macroInfoPanel = Instance.new("Frame")
 macroInfoPanel.Name = "MacroInfoPanel"
 macroInfoPanel.BackgroundColor3 = COLORS.background_secondary
 macroInfoPanel.Size = UDim2.new(1, -20, 0, 300) -- fixed height to avoid AutomaticSize quirks in ScrollingFrame
-macroInfoPanel.Position = UDim2.new(0, 10, 0, 670)
+macroInfoPanel.Position = UDim2.new(0, 10, 0, 770)
 macroInfoPanel.Parent = macroContainer
 createCorner(macroInfoPanel, 10)
 createStroke(macroInfoPanel, COLORS.border, 1, 0.8)
@@ -1749,6 +1870,11 @@ local function switchTab(tabName)
   end
   if pages[tabName] then
     pages[tabName].Visible = true
+  end
+  
+  -- Reset macro scroll position when opening the Macro System so it doesn't appear mid-way
+  if tabName == "Macro System" and macroContainer and macroContainer.CanvasPosition then
+    macroContainer.CanvasPosition = Vector2.new(0, 0)
   end
   
   currentTab = tabName
