@@ -716,7 +716,6 @@ macroDesc.TextYAlignment = Enum.TextYAlignment.Top
 macroDesc.TextWrapped = true
 macroDesc.Parent = macroPage
 
--- ===== MACRO RECORDER UI =====
 -- Main container with gradient background
 local macroContainer = Instance.new("ScrollingFrame")
 macroContainer.Name = "MacroContainer"
@@ -780,8 +779,48 @@ statusDesc.Position = UDim2.new(0, 35, 0, 30)
 statusDesc.TextXAlignment = Enum.TextXAlignment.Left
 statusDesc.Parent = controlPanel
 
+
+-- ===== FILESYSTEM HELPERS (moved up so dropdown can use them) =====
+local FS = {}
+do
+  local g = getgenv and getgenv() or _G or {}
+  FS.writefile  = rawget(g, "writefile") or (rawget(g, "syn") and g.syn.writefile) or (rawget(g, "krnl") and g.krnl.writefile)
+  FS.appendfile = rawget(g, "appendfile") or (rawget(g, "syn") and g.syn.appendfile)
+  FS.isfile     = rawget(g, "isfile")     or (rawget(g, "syn") and g.syn.isfile)
+  FS.isfolder   = rawget(g, "isfolder")   or (rawget(g, "syn") and g.syn.isfolder)
+  FS.makefolder = rawget(g, "makefolder") or (rawget(g, "syn") and g.syn.makefolder)
+  FS.listfiles  = rawget(g, "listfiles")  or (rawget(g, "syn") and g.syn.listfiles) or rawget(g, "getfiles")
+end
+
+local function basename(path)
+  if not path then return nil end
+  local name = path:match("([^/\\]+)$")
+  return name
+end
+
+local function strip_json(extname)
+  return extname and extname:gsub("%.json$", "") or extname
+end
+
+local function ensureFolder(path)
+  if FS.isfolder and not FS.isfolder(path) then
+    pcall(FS.makefolder, path)
+  elseif FS.makefolder then
+    pcall(FS.makefolder, path)
+  end
+end
+
+local function sanitizeName(s)
+  s = tostring(s or ""):lower()
+  s = s:gsub("[^a-z0-9_]", "_")
+  s = s:gsub("_+", "_")
+  s = s:gsub("^_+", ""):gsub("_+$", "")
+  return s
+end
+
 -- ===== MACRO PICKER (Dropdown) =====
 local selectedMacroName = nil
+local macroIndex = {} -- displayName -> fullPath
 
 local macroPicker = Instance.new("Frame")
 macroPicker.Name = "MacroPicker"
@@ -818,27 +857,64 @@ selectBtn.Position = UDim2.new(0, 10, 0, 14)
 selectBtn.Parent = macroPicker
 selectBtn.ZIndex = 55
 createCorner(selectBtn, 8)
-createStroke(selectBtn, COLORS.border, 1, 0.7)
+local selectBtnStroke = createStroke(selectBtn, COLORS.border, 1, 0.7)
+
+-- Visual feedback when a macro is selected from the dropdown
+local function flashMacroChosenFeedback()
+  local originalBg = selectBtn.BackgroundColor3
+  local originalStroke = selectBtnStroke.Color
+
+  -- Small pop animation (grow then shrink)
+  local grow = TweenService:Create(selectBtn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+    Size = UDim2.new(1, -16, 0, 31)
+  })
+  local shrink = TweenService:Create(selectBtn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+    Size = UDim2.new(1, -20, 0, 28)
+  })
+
+  -- Flash accent color on background and stroke
+  TweenService:Create(selectBtn, TweenInfo.new(0.15), { BackgroundColor3 = COLORS.accent }):Play()
+  TweenService:Create(selectBtnStroke, TweenInfo.new(0.15), { Color = COLORS.accent }):Play()
+  grow:Play()
+
+  task.delay(0.18, function()
+    TweenService:Create(selectBtn, TweenInfo.new(0.20), { BackgroundColor3 = originalBg }):Play()
+    TweenService:Create(selectBtnStroke, TweenInfo.new(0.20), { Color = originalStroke }):Play()
+    shrink:Play()
+  end)
+end
 
 local dropdownList = Instance.new("ScrollingFrame")
 dropdownList.Name = "DropdownList"
 dropdownList.BackgroundColor3 = COLORS.background_secondary
 dropdownList.BorderSizePixel = 0
 dropdownList.Visible = false
-dropdownList.ZIndex = 60
+dropdownList.ZIndex = 200
 dropdownList.ScrollBarThickness = 4
 dropdownList.ScrollBarImageColor3 = COLORS.accent
 dropdownList.Size = UDim2.new(1, -20, 0, 150)
 dropdownList.Position = UDim2.new(0, 10, 0, 40)
 dropdownList.Parent = macroPicker
-dropdownList.ClipsDescendants = false
+dropdownList.ClipsDescendants = true
+dropdownList.ScrollingEnabled = true
 createCorner(dropdownList, 8)
 createStroke(dropdownList, COLORS.border, 1, 0.7)
+-- Add padding so items don't start flush
+local dropdownPadding = Instance.new("UIPadding")
+dropdownPadding.PaddingTop = UDim.new(0, 4)
+dropdownPadding.PaddingLeft = UDim.new(0, 4)
+dropdownPadding.Parent = dropdownList
 
 local dropdownLayout = Instance.new("UIListLayout")
 dropdownLayout.SortOrder = Enum.SortOrder.LayoutOrder
 dropdownLayout.Padding = UDim.new(0, 4)
 dropdownLayout.Parent = dropdownList
+
+local function updateDropdownCanvas()
+  dropdownList.CanvasSize = UDim2.new(0, 0, 0, dropdownLayout.AbsoluteContentSize.Y + dropdownPadding.PaddingTop.Offset + 4)
+end
+
+dropdownLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateDropdownCanvas)
 
 local function clearDropdownItems()
   for _, child in ipairs(dropdownList:GetChildren()) do
@@ -848,18 +924,22 @@ local function clearDropdownItems()
   end
 end
 
-local function addDropdownItem(text)
+local function addDropdownItem(displayText, fullPath)
   local item = Instance.new("TextButton")
-  item.Text = text
+  item.Text = displayText
   item.AutoButtonColor = false
   item.BackgroundColor3 = COLORS.background_tertiary
   item.TextColor3 = Color3.new(1,1,1)
   item.Font = Enum.Font.SourceSans
   item.TextSize = 14
   item.Size = UDim2.new(1, -8, 0, 26)
-  item.Position = UDim2.new(0, 4, 0, 0)
+  -- item.Position = UDim2.new(0, 4, 0, 0) -- Removed: now handled by UIListLayout + UIPadding
   item.Parent = dropdownList
+  item.ZIndex = dropdownList.ZIndex + 1
   createCorner(item, 6)
+
+  macroIndex[displayText] = fullPath or displayText
+
   item.MouseEnter:Connect(function()
     TweenService:Create(item, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
   end)
@@ -867,9 +947,10 @@ local function addDropdownItem(text)
     TweenService:Create(item, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.background_tertiary}):Play()
   end)
   item.MouseButton1Click:Connect(function()
-    selectedMacroName = text
-    selectBtn.Text = text .. " ▾"
+    selectedMacroName = macroIndex[displayText]
+    selectBtn.Text = displayText .. " ▾"
     dropdownList.Visible = false
+    flashMacroChosenFeedback()
   end)
 end
 
@@ -884,28 +965,55 @@ local function refreshMacroList()
     end
   end)
 
+  local added = false
+
+  -- 1) Si la API devolvió algo, úsalo tal cual
   if ok and type(list) == "table" and #list > 0 then
     for _, name in ipairs(list) do
       if type(name) == "string" and #name > 0 then
-        addDropdownItem(name)
+        -- Mostramos nombre “bonito” pero guardamos ruta/nombre tal cual nos lo da la API
+        local display = strip_json(basename(name)) or name
+        addDropdownItem(display, name)
+        added = true
       end
     end
-  else
-    addDropdownItem("No macros found")
   end
 
-  -- Ajusta el canvas al contenido real
-  task.defer(function()
-    dropdownList.CanvasSize = UDim2.new(0, 0, 0, dropdownLayout.AbsoluteContentSize.Y + 8)
-  end)
+  -- 2) Fallback: listar archivos de la carpeta Moon_Macros/*.json
+  if not added and FS.listfiles then
+    ensureFolder("Moon_Macros")
+    local ok2, files = pcall(FS.listfiles, "Moon_Macros")
+    if ok2 and type(files) == "table" then
+      table.sort(files, function(a,b) return tostring(a):lower() < tostring(b):lower() end)
+      for _, path in ipairs(files) do
+        local p = tostring(path)
+        if p:lower():match("%.json$") then
+          local disp = strip_json(basename(p))
+          addDropdownItem(disp, p)   -- display bonito, path completo para cargar
+          added = true
+        end
+      end
+    end
+  end
+
+  if not added then
+    addDropdownItem("No macros found", nil)
+  end
+
+  updateDropdownCanvas()
+  -- ensure we start at the top each time the list opens
+  dropdownList.CanvasPosition = Vector2.new(0, 0)
 end
 
+  -- Ajusta el canvas al contenido real
 selectBtn.MouseButton1Click:Connect(function()
   if dropdownList.Visible then
     dropdownList.Visible = false
   else
     refreshMacroList()
     dropdownList.Visible = true
+    updateDropdownCanvas()
+    dropdownList.CanvasPosition = Vector2.new(0, 0)
   end
 end)
 
@@ -1065,7 +1173,7 @@ end)
 local newMacroBox = Instance.new("Frame")
 newMacroBox.Name = "NewMacroBox"
 newMacroBox.BackgroundColor3 = COLORS.background_secondary
-newMacroBox.Size = UDim2.new(1, -20, 0, 72)
+newMacroBox.Size = UDim2.new(1, -20, 0, 75)
 newMacroBox.Position = UDim2.new(0, 10, 0, 410)
 newMacroBox.Parent = macroContainer
 createCorner(newMacroBox, 10)
@@ -1098,43 +1206,7 @@ nameInput.Parent = newMacroBox
 createCorner(nameInput, 8)
 createStroke(nameInput, COLORS.border, 1, 0.7)
 
-local nmHint = Instance.new("TextLabel")
-nmHint.BackgroundTransparency = 1
-nmHint.Text = "Press Enter to create: Moon_Macros/<name>.json"
-nmHint.TextColor3 = COLORS.text_dim
-nmHint.Font = Enum.Font.SourceSans
-nmHint.TextSize = 12
-nmHint.Size = UDim2.new(1, -20, 0, 18)
-nmHint.Position = UDim2.new(0, 10, 0, 72)
-nmHint.TextXAlignment = Enum.TextXAlignment.Left
-nmHint.Parent = newMacroBox
-
 -- cross-executor filesystem helpers
-local FS = {}
-do
-  local g = getgenv and getgenv() or _G or {}
-  FS.writefile = rawget(g, "writefile") or (rawget(g, "syn") and g.syn.writefile) or (rawget(g, "krnl") and g.krnl.writefile)
-  FS.appendfile = rawget(g, "appendfile") or (rawget(g, "syn") and g.syn.appendfile)
-  FS.isfile = rawget(g, "isfile") or (rawget(g, "syn") and g.syn.isfile)
-  FS.isfolder = rawget(g, "isfolder") or (rawget(g, "syn") and g.syn.isfolder)
-  FS.makefolder = rawget(g, "makefolder") or (rawget(g, "syn") and g.syn.makefolder)
-end
-
-local function ensureFolder(path)
-  if FS.isfolder and not FS.isfolder(path) then
-    pcall(FS.makefolder, path)
-  elseif FS.makefolder then
-    pcall(FS.makefolder, path)
-  end
-end
-
-local function sanitizeName(s)
-  s = tostring(s or ""):lower()
-  s = s:gsub("[^a-z0-9_]", "_")
-  s = s:gsub("_+", "_")
-  s = s:gsub("^_+", ""):gsub("_+$", "")
-  return s
-end
 
 local function createMacroJson(rawName)
   if not FS.writefile then
@@ -1181,6 +1253,10 @@ nameInput.FocusLost:Connect(function(enterPressed)
 end)
 
 -- ===== AUTO REPLAY TOGGLE =====
+-- Macro state (declared early so upvalues exist)
+local isRecording = false
+local isPlaying = false
+local recordedActions = {}
 -- UI block (same look as Find Trait Burner)
 local autoReplayBox = Instance.new("Frame")
 autoReplayBox.Name = "AutoReplayBox"
@@ -1596,7 +1672,7 @@ end)
 
 -- Prevent enabling Auto replay while Auto select is active
 local oldToggleAutoReplay = toggleAutoReplay
-function toggleAutoReplay()
+toggleAutoReplay = function()
   if AutoSelect and AutoSelect.enabled then
     updateStatus("idle", "Disable Auto select macro first")
     -- Brief flash feedback on the Auto replay switch
@@ -1609,10 +1685,6 @@ function toggleAutoReplay()
   oldToggleAutoReplay()
 end
 
--- Macro state
-local isRecording = false
-local isPlaying = false
-local recordedActions = {}
 
 -- Update status function
 local function updateStatus(state, description)
