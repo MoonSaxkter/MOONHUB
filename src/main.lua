@@ -880,6 +880,18 @@ local function updateFilterCanvas()
 end
 listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateFilterCanvas)
 
+-- Track a single open dropdown row so only one can be expanded at a time
+local openFilterRow: Frame? = nil
+local function collapseOpenRow()
+  if openFilterRow and openFilterRow.Parent then
+    local popup = openFilterRow:FindFirstChild("Popup")
+    if popup and popup:IsA("Frame") then popup.Visible = false end
+    openFilterRow.Size = UDim2.new(1, 0, 0, 72)
+    openFilterRow = nil
+    updateFilterCanvas()
+  end
+end
+
 -- UI factory for one map row (bold name + multiselect dropdown)
 local function createMapFilter(map)
   local row = Instance.new("Frame")
@@ -920,16 +932,19 @@ local function createMapFilter(map)
   btn.Position = UDim2.new(0, 10, 0, 0)
   btn.TextXAlignment = Enum.TextXAlignment.Left
   btn.Parent = dd
+  btn.ZIndex = 11
 
-  -- The popup list
+  -- Popup lives inside the row so it scrolls/clips with the list
   local popup = Instance.new("Frame")
   popup.Name = "Popup"
   popup.BackgroundColor3 = COLORS.background_secondary
   popup.Visible = false
   popup.Parent = row
-  popup.ZIndex = 100
-  popup.Size = UDim2.new(1, 0, 0, 130)
-  popup.Position = UDim2.new(0, 0, 0, 74)
+  popup.ZIndex = 10
+  popup.ClipsDescendants = true
+  -- below the dropdown (title 22 + gap 6 + dropdown 42 + gap 6)
+  popup.Position = UDim2.new(0, 8, 0, 22 + 6 + 42 + 6)
+  popup.Size = UDim2.new(1, -16, 0, 120)
   createCorner(popup, 8)
   createStroke(popup, COLORS.border, 1, 0.6)
 
@@ -943,6 +958,28 @@ local function createMapFilter(map)
   popList.Padding = UDim.new(0, 6)
   popList.Parent = popup
 
+  -- Expanded size when popup open
+  local baseRowH = 72
+  local expandedRowH = baseRowH + popup.Size.Y.Offset + 10
+
+  local function openPopup()
+    -- Only one open at a time
+    if openFilterRow and openFilterRow ~= row then
+      collapseOpenRow()
+    end
+    row.Size = UDim2.new(1, 0, 0, expandedRowH)
+    popup.Visible = true
+    openFilterRow = row
+    updateFilterCanvas()
+  end
+
+  local function closePopup()
+    popup.Visible = false
+    row.Size = UDim2.new(1, 0, 0, baseRowH)
+    if openFilterRow == row then openFilterRow = nil end
+    updateFilterCanvas()
+  end
+  
   -- Initialize selection set from module (if any)
   FilterSelections[map.key] = FilterSelections[map.key] or {}
   pcall(function()
@@ -957,20 +994,22 @@ local function createMapFilter(map)
 
   -- Build check rows
   local function addOption(opt)
-    local row = Instance.new("TextButton")
-    row.AutoButtonColor = false
-    row.BackgroundColor3 = COLORS.background_tertiary
-    row.Text = ""
-    row.Size = UDim2.new(1, -16, 0, 26)
-    row.Parent = popup
-    createCorner(row, 6)
+    local orow = Instance.new("TextButton")
+    orow.AutoButtonColor = false
+    orow.BackgroundColor3 = COLORS.background_tertiary
+    orow.Text = ""
+    orow.Size = UDim2.new(1, -16, 0, 26)
+    orow.Parent = popup
+    orow.ZIndex = 12
+    createCorner(orow, 6)
 
     local box = Instance.new("Frame")
     box.Size = UDim2.new(0, 18, 0, 18)
     box.Position = UDim2.new(0, 6, 0.5, 0)
     box.AnchorPoint = Vector2.new(0, 0.5)
     box.BackgroundColor3 = COLORS.background_secondary
-    box.Parent = row
+    box.Parent = orow
+    box.ZIndex = 13
     createCorner(box, 4)
     createStroke(box, COLORS.border, 1, 0.5)
 
@@ -983,6 +1022,7 @@ local function createMapFilter(map)
     tick.Font = Enum.Font.SourceSansBold
     tick.TextSize = 18
     tick.Parent = box
+    tick.ZIndex = 14
 
     local lab = Instance.new("TextLabel")
     lab.BackgroundTransparency = 1
@@ -993,7 +1033,8 @@ local function createMapFilter(map)
     lab.TextXAlignment = Enum.TextXAlignment.Left
     lab.Size = UDim2.new(1, -34, 1, 0)
     lab.Position = UDim2.new(0, 34, 0, 0)
-    lab.Parent = row
+    lab.Parent = orow
+    lab.ZIndex = 14
 
     local function refresh()
       local on = FilterSelections[map.key][opt.key] == true
@@ -1001,20 +1042,21 @@ local function createMapFilter(map)
       tick.Text = on and "✓" or ""
     end
 
-    row.MouseButton1Click:Connect(function()
+    orow.MouseButton1Click:Connect(function()
       local cur = FilterSelections[map.key][opt.key]
       FilterSelections[map.key][opt.key] = not cur and true or nil
       btn.Text = summarizeSelection(FilterSelections[map.key]) .. " ▾"
       refresh()
       syncFilter(map.key)
+      closePopup()
     end)
 
     -- hover
-    row.MouseEnter:Connect(function()
-      TweenService:Create(row, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
+    orow.MouseEnter:Connect(function()
+      TweenService:Create(orow, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
     end)
-    row.MouseLeave:Connect(function()
-      TweenService:Create(row, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.background_tertiary}):Play()
+    orow.MouseLeave:Connect(function()
+      TweenService:Create(orow, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.background_tertiary}):Play()
     end)
 
     refresh()
@@ -1026,7 +1068,11 @@ local function createMapFilter(map)
 
   -- Button to open/close popup
   btn.MouseButton1Click:Connect(function()
-    popup.Visible = not popup.Visible
+    if popup.Visible then
+      closePopup()
+    else
+      openPopup()
+    end
   end)
 
   -- Initialize button summary text
@@ -1036,6 +1082,20 @@ end
 for _,m in ipairs(MAPS) do
   createMapFilter(m)
 end
+
+-- Close dropdown when clicking outside any open filter row
+UIS.InputBegan:Connect(function(input)
+  if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+  if not openFilterRow then return end
+  -- if click is outside the currently open row, collapse it
+  local pos = input.Position
+  local topLeft = openFilterRow.AbsolutePosition
+  local bottomRight = topLeft + openFilterRow.AbsoluteSize
+  local inside = (pos.X >= topLeft.X and pos.X <= bottomRight.X and pos.Y >= topLeft.Y and pos.Y <= bottomRight.Y)
+  if not inside then
+    collapseOpenRow()
+  end
+end)
 
 updateFilterCanvas()
 
