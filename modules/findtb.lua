@@ -344,6 +344,11 @@ local function isAllowedByFilter(mapName, canonCh)
     -- Fail-closed if the filter module is not available
     if not Filter then return false end
 
+    -- If map is missing/undetected, do not allow
+    if (mapName == nil) or (mapName == "") then
+        return false
+    end
+
     -- If challenge is missing/undetected, do not allow
     if (canonCh == nil) or (canonCh == "") then
         return false
@@ -413,8 +418,8 @@ local function scan_challenge(i)
     local canonCh  = canonicalChallengeFromHint(typeHint)
     local mapName  = detectCurrentMapName()
 
-    -- Respetar filtro incluso si no se pudo detectar el challenge (canonCh=="")
-    if mapName ~= "" then
+    -- Enforce filter (fail-closed): if map or challenge are not recognized or not allowed, skip.
+    do
         local allowed = isAllowedByFilter(mapName, canonCh)
         if not allowed then
             -- Debug mínimo para inspección (puedes comentar si no quieres ruido):
