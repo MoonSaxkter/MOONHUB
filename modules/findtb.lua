@@ -22,6 +22,21 @@ local Filter = (getgenv and getgenv().MoonFilter)
                   return nil
                 end)()
 
+-- ===== DEBUG LINK WITH FILTER =====
+local function _ftbdbg(...)
+  print("[FindTB][Filter]", ...)
+end
+
+-- Log whether Filter is present and how many maps it reports
+do
+  local count = 0
+  if Filter and type(Filter.listMaps) == "function" then
+    local ok, list = pcall(Filter.listMaps)
+    if ok and type(list) == "table" then count = #list end
+  end
+  _ftbdbg(string.format("loaded=%s maps=%d", tostring(not not Filter), count))
+end
+
 -- ===== Config =====
 local UI_TIMEOUT_SEC   = 20
 local RETRIES_PRESS    = 3
@@ -335,33 +350,39 @@ local function canonicalChallengeFromHint(hint)
     return ""
 end
 
--- Decide allowance with strict defaults:
--- - If Filter is missing => allowed
--- - If map has no configured challenges (empty list) => NOT allowed (ignored)
--- - If challenge is empty/undetected => NOT allowed
--- - Else allowed only if challenge is in the map's allowed set
 local function isAllowedByFilter(mapName, canonCh)
-    -- Fail-closed: if no filter or bad params, do NOT allow
-    if not Filter then return false end
-    if (mapName == nil) or (mapName == "") then return false end
-    if (canonCh == nil) or (canonCh == "") then return false end
+    -- Fail-closed and explain why
+    if not Filter then
+        warn("[FindTB][Filter] BLOCK: Filter=nil")
+        return false
+    end
+    if (mapName == nil) or (mapName == "") then
+        warn("[FindTB][Filter] BLOCK: mapName missing")
+        return false
+    end
+    if (canonCh == nil) or (canonCh == "") then
+        warn("[FindTB][Filter] BLOCK: challenge missing for map=" .. tostring(mapName))
+        return false
+    end
 
-    -- We ONLY trust getAllowed; if it's missing or malformed => block
     if type(Filter.getAllowed) ~= "function" then
+        warn("[FindTB][Filter] BLOCK: getAllowed missing")
         return false
     end
 
     local ok, t = pcall(function()
         return Filter.getAllowed(mapName)
     end)
-    if not ok then return false end
-
-    -- If map not configured or configured as empty => ignore (block)
-    if type(t) ~= "table" or next(t) == nil then
+    if not ok then
+        warn("[FindTB][Filter] BLOCK: getAllowed error for map=" .. tostring(mapName))
         return false
     end
 
-    -- Build a lowercase set from either {"A","B"} or {A=true,B=true}
+    if type(t) ~= "table" or next(t) == nil then
+        warn("[FindTB][Filter] BLOCK: map has no allowed challenges -> " .. tostring(mapName))
+        return false
+    end
+
     local set = {}
     for k, v in pairs(t) do
         if type(k) == "number" and type(v) == "string" then
@@ -371,8 +392,13 @@ local function isAllowedByFilter(mapName, canonCh)
         end
     end
 
-    -- Compare case-insensitive against the canonical challenge
-    return set[string.lower(canonCh)] == true
+    local okAllowed = set[string.lower(canonCh)] == true
+    if not okAllowed then
+        warn(string.format("[FindTB][Filter] BLOCK: '%s' not allowed for map '%s'", tostring(canonCh), tostring(mapName)))
+    else
+        print(string.format("[FindTB][Filter] ALLOW: '%s' for '%s'", tostring(canonCh), tostring(mapName)))
+    end
+    return okAllowed
 end
 
 local function clickTextButton(btn)
@@ -402,6 +428,8 @@ local function scan_challenge(i)
     local typeHint = (getChallengeTypeHint() or ""):lower()
     local canonCh  = canonicalChallengeFromHint(typeHint)
     local mapName  = detectCurrentMapName()
+
+    print(string.format("[FindTB] detected map='%s' challenge='%s'", tostring(mapName), tostring(canonCh)))
 
     -- Enforce filter (fail-closed): if map or challenge are not recognized or not allowed, skip.
     do
