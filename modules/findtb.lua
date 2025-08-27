@@ -362,9 +362,25 @@ local function scan_challenge(i)
     local canonCh  = canonicalChallengeFromHint(typeHint)
     local mapName  = detectCurrentMapName()
 
-    -- Si el filtro existe y define que este mapa/challenge no está permitido, saltar silenciosamente
-    if Filter and type(Filter.isAllowed) == "function" and canonCh ~= "" and mapName ~= "" then
-        if not Filter.isAllowed(mapName, canonCh) then
+    -- Respetar filtro incluso si no se pudo detectar el challenge (canonCh=="")
+    if Filter and mapName ~= "" then
+        local allowed = false
+        pcall(function()
+            if type(Filter.isAllowed) == "function" then
+                if canonCh ~= "" then
+                    -- Caso normal: challenge detectado
+                    allowed = Filter.isAllowed(mapName, canonCh)
+                else
+                    -- Fallback: si el mapa no tiene NINGÚN challenge seleccionado, debe quedar ignorado
+                    if type(Filter.isMapAllowed) == "function" then
+                        allowed = Filter.isMapAllowed(mapName)
+                    else
+                        allowed = false
+                    end
+                end
+            end
+        end)
+        if not allowed then
             return {ok=true, index=i, filtered=true, map=mapName, challenge=canonCh, has_tb=false}
         end
     end
