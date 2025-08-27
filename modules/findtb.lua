@@ -3,15 +3,6 @@
 -- # Modo ligero: mínimos logs y menos overhead
 -- ############################################################
 
--- === External toggle guard (controlled from main.lua) ===
-if _G.FindTBActive == false then
-    return { 
-        stop = function() end, 
-        status = function() return { active = false, entered = false, lastSelected = "Challenge1" } end 
-    }
-end
-_G.FindTBActive = true
-
 -- ===== Servicios base =====
 local Players  = game:GetService("Players")
 local Rep      = game:GetService("ReplicatedStorage")
@@ -222,6 +213,12 @@ local function start_challenge_via_remote(name, chapter, difficulty)
     pcall(function() RF:InvokeServer(payload) end)
 end
 
+-- Dispara el botón "Start" via Remote (payload corto)
+local function press_start_remote()
+    local payload = { Start = true, Type = "Lobby", Update = true, Mode = "Pod" }
+    pcall(function() RF:InvokeServer(payload) end)
+end
+
 -- ===================== Helpers StageScroll + EXPERT refresh =========
 local function findStageScroll()
     local ok, scroll = pcall(function()
@@ -253,43 +250,22 @@ local function waitRewardsRefresh(timeout)
 end
 
 local function findExpertButton()
-    -- 1) Try canonical path first
     local segments = {
         "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
         "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
         "DifficultFrame","Hard","Button"
     }
     local btn = descend(PG, segments, 3.0)
-    if btn and btn:IsA("TextButton") and btn.Visible and btn.Active then
-        return btn
-    end
-
-    -- 2) Fallback: search inside RightFrame for any TextButton labeled Hard/Expert
-    local right = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
-    if right then
-        for _,n in ipairs(right:GetDescendants()) do
+    if btn and btn:IsA("TextButton") then return btn end
+    local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
+    if rr then
+        for _,n in ipairs(rr:GetDescendants()) do
             if n:IsA("TextButton") then
                 local t = (n.Text or n.Name or ""):lower()
-                if t:find("expert",1,true) or t:find("hard",1,true) then
-                    -- Prefer visible/active buttons only
-                    if n.Visible ~= false and n.Active ~= false then
-                        return n
-                    end
-                end
+                if t:find("expert",1,true) then return n end
             end
         end
     end
-
-    -- 3) Last resort: look for any child named "Hard" with a Button under it
-    if right then
-        for _,n in ipairs(right:GetDescendants()) do
-            if n.Name == "Hard" then
-                local b = n:FindFirstChildWhichIsA("TextButton", true)
-                if b and b.Visible and b.Active then return b end
-            end
-        end
-    end
-
     return nil
 end
 
@@ -332,19 +308,10 @@ local function scan_challenge(i)
     clickTextButton(btn)
     waitRewardsRefresh(1.0)
 
-    -- Ensure EXPERT/HARD difficulty is pressed
-    local clicked = false
     local expBtn = findExpertButton()
     if expBtn then
-        clicked = clickTextButton(expBtn)
-        waitRewardsRefresh(1.2)
-    end
-    if not clicked then
-        -- Try explicit press via the canonical path with retries
-        clicked = pressExpert()
-        if clicked then
-            waitRewardsRefresh(1.2)
-        end
+        clickTextButton(expBtn)
+        waitRewardsRefresh(1.6)
     end
 
     local typeHint = (getChallengeTypeHint() or ""):lower()
@@ -354,81 +321,79 @@ local function scan_challenge(i)
     return {ok=true, index=i, type_hint=typeHint, has_tb=hasTB}
 end
 
--- ===================== MAIN FLOW ============================
-task.spawn(function()
-    if not _G.FindTBActive then return end
-    tpToChallengePod()
-    descend(PG, {"MainUI","WorldFrame"}, 6.0)
+-- ===================== MODULE API (controlled by UI) ============================
+local M = {}
+local running = false
 
-    local FOUND = false
-    for i=1,4 do
-        if not _G.FindTBActive then break end
-        local res = scan_challenge(i)
-        if res.ok then
-            local hint = res.type_hint or ""
-            local isRandom = (hint:find("random",1,true) ~= nil)
-                           or (hint:find("everything but imagination",1,true) ~= nil)
-            if res.has_tb and not isRandom then
-                ENTERED = true
-                start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
-                FOUND = true
-                break
+function M.start()
+    if running then return end
+    running = true
+    ENTERED = false
+
+    task.spawn(function()
+        tpToChallengePod()
+        descend(PG, {"MainUI","WorldFrame"}, 6.0)
+
+        local FOUND = false
+        for i=1,4 do
+            if not running or ENTERED then break end
+            local res = scan_challenge(i)
+            if res.ok then
+                local hint = res.type_hint or ""
+                local isRandom = (hint:find("random",1,true) ~= nil)
+                               or (hint:find("everything but imagination",1,true) ~= nil)
+                if res.has_tb and not isRandom then
+                    ENTERED = true
+                    start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
+                    task.wait(0.25)
+                    press_start_remote()
+                    FOUND = true
+                    break
+                end
             end
+            task.wait(0.12)
         end
-        task.wait(0.12)
-    end
 
-    if not FOUND then
-        -- silencioso: no imprime nada si no encuentra
-    end
-end)
+        if not FOUND and running then
+            -- ===== Auto-rescan (ligero) =====
+            local RESCAN_EVERY_SEC = 5
+            local MAX_ROUNDS = 240
 
-print("[ASTD-X] listo (ligero)")
-
--- ===== Auto-rescan (ligero) =====
-local AUTO_RESCAN = true
-local RESCAN_EVERY_SEC = 5
-local MAX_ROUNDS = 240
-
-if AUTO_RESCAN then
-  task.spawn(function()
-    task.wait(6)
-    for _=1,MAX_ROUNDS do
-      if not _G.FindTBActive or ENTERED then break end
-      local found = false
-      for i=1,4 do
-        if not _G.FindTBActive or ENTERED then break end
-        local res = scan_challenge(i)
-        if res.ok then
-          local hint = res.type_hint or ""
-          local isRandom = (hint:find("random",1,true) ~= nil)
-                         or (hint:find("everything but imagination",1,true) ~= nil)
-          if res.has_tb and not isRandom then
-            ENTERED = true
-            start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
-            found = true
-            break
-          end
+            task.spawn(function()
+                task.wait(6)
+                for _=1,MAX_ROUNDS do
+                    if not running or ENTERED then break end
+                    local found = false
+                    for i=1,4 do
+                        if not running or ENTERED then break end
+                        local res = scan_challenge(i)
+                        if res.ok then
+                            local hint = res.type_hint or ""
+                            local isRandom = (hint:find("random",1,true) ~= nil)
+                                           or (hint:find("everything but imagination",1,true) ~= nil)
+                            if res.has_tb and not isRandom then
+                                ENTERED = true
+                                start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
+                                task.wait(0.25)
+                                press_start_remote()
+                                found = true
+                                break
+                            end
+                        end
+                        task.wait(0.12)
+                    end
+                    if found or not running or ENTERED then break end
+                    task.wait(RESCAN_EVERY_SEC)
+                end
+            end)
         end
-        task.wait(0.12)
-      end
-      if found or ENTERED then break end
-      task.wait(RESCAN_EVERY_SEC)
-    end
-  end)
+    end)
 end
 
-return {
-    stop = function()
-        _G.FindTBActive = false
-        ENTERED = true -- force all loops to end
-        print("[FindTB] Module stopped")
-    end,
-    status = function()
-        return {
-            active = not not _G.FindTBActive,
-            entered = not not ENTERED,
-            lastSelected = LAST_SELECTED
-        }
-    end
-}
+function M.stop()
+    running = false
+    ENTERED = true -- forza la salida de los bucles activos
+    print("[FindTB] stopped by UI toggle")
+end
+
+return M

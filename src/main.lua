@@ -429,7 +429,9 @@ local function toggleTB()
 
     -- Only signal and call the external module
     _G.FindTBActive = true
-    ensureFindTB()
+    if ensureFindTB() and FindTBModule and FindTBModule.start then
+      pcall(FindTBModule.start)
+    end
   else
     -- UI OFF
     TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0,0.5) }):Play()
