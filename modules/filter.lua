@@ -59,6 +59,14 @@ do
   FS.isfile     = rawget(g, "isfile")     or (rawget(g, "syn") and g.syn.isfile)
   FS.isfolder   = rawget(g, "isfolder")   or (rawget(g, "syn") and g.syn.isfolder)
   FS.makefolder = rawget(g, "makefolder") or (rawget(g, "syn") and g.syn.makefolder)
+
+  -- Fallback: synthesize isfile when only readfile exists (KRNL compatibility)
+  if not FS.isfile and FS.readfile then
+    FS.isfile = function(path)
+      local ok = pcall(function() FS.readfile(path) end)
+      return ok
+    end
+  end
 end
 
 local CFG_DIR  = "Moon_Config"
@@ -103,9 +111,11 @@ local function encodeJSON(tbl)
 end
 
 function Filter.load()
-  if not (FS.readfile and FS.isfile) then
-    -- sin FS: usar memoria por sesión
-    state.allowed = state.allowed.next and state.allowed or defaultAllowed()
+  if not (FS.readfile and (FS.isfile or FS.readfile)) then
+    -- sin FS real: usar memoria por sesión y poblar defaults si está vacío
+    if next(state.allowed) == nil then
+      state.allowed = defaultAllowed()
+    end
     return true, "memory-only"
   end
   ensureCfgDir()
@@ -170,6 +180,7 @@ function Filter.setAllowed(mapName, challengesList)
     end
   end
   state.allowed[mk] = set
+  pcall(Filter.save)
   return true
 end
 
@@ -187,6 +198,7 @@ function Filter.toggle(mapName, challengeName, enable)
   else
     state.allowed[mk][ck] = true
   end
+  pcall(Filter.save)
   return true
 end
 
@@ -253,12 +265,14 @@ function Filter.import(tbl)
   local empty = true
   for _ in pairs(out) do empty = false break end
   state.allowed = empty and defaultAllowed() or out
+  pcall(Filter.save)
   return okAll
 end
 
 -- Reset total
 function Filter.reset()
   state.allowed = defaultAllowed()
+  pcall(Filter.save)
 end
 
 --------------------------------------------------------------------
