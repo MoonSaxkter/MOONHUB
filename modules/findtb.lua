@@ -314,6 +314,7 @@ local function detectCurrentMapName()
 end
 
 -- Map loose "type hints" to canonical challenge names used by Filter
+
 local function canonicalChallengeFromHint(hint)
     hint = tostring(hint or ""):lower()
     if hint:find("random",1,true) or hint:find("everything but imagination",1,true) then
@@ -332,6 +333,71 @@ local function canonicalChallengeFromHint(hint)
         return "High Cost"
     end
     return ""
+end
+
+-- Decide allowance with strict defaults:
+-- - If Filter is missing => allowed
+-- - If map has no configured challenges (empty list) => NOT allowed (ignored)
+-- - If challenge is empty/undetected => NOT allowed
+-- - Else allowed only if challenge is in the map's allowed set
+local function isAllowedByFilter(mapName, canonCh)
+    if not Filter then return true end
+    local allowed = true
+
+    local function tableLen(t)
+        local n = 0
+        for _ in pairs(t) do n = n + 1 end
+        return n
+    end
+
+    local ok = pcall(function()
+        if type(Filter.getAllowed) == "function" then
+            local t = Filter.getAllowed(mapName)  -- preferred: returns array of allowed challenges or {}
+            if type(t) == "table" then
+                -- If nothing configured for this map -> ignore map
+                if (#t == 0) or (tableLen(t) == 0) then
+                    allowed = false
+                    return
+                end
+                -- If challenge not detected -> treat as NOT allowed
+                if (canonCh == nil) or (canonCh == "") then
+                    allowed = false
+                    return
+                end
+                -- Build quick set for membership check (supports {array} or { [name]=true } )
+                local set = {}
+                for k, v in pairs(t) do
+                    if type(k) == "number" then
+                        if type(v) == "string" then set[v] = true end
+                    elseif type(k) == "string" and v == true then
+                        set[k] = true
+                    end
+                end
+                allowed = set[canonCh] == true
+                return
+            end
+        end
+
+        -- Fallback path with isAllowed(map, challenge)
+        if type(Filter.isAllowed) == "function" then
+            if (canonCh == nil) or (canonCh == "") then
+                allowed = false   -- strict default: undetected challenge -> ignore
+            else
+                allowed = Filter.isAllowed(mapName, canonCh)
+            end
+            return
+        end
+
+        -- If we reach here, we couldn't consult filter -> default allow
+        allowed = true
+    end)
+
+    if not ok then
+        -- On any filter error, fail closed (ignore) to be safe.
+        allowed = false
+    end
+
+    return allowed
 end
 
 local function clickTextButton(btn)
@@ -363,24 +429,11 @@ local function scan_challenge(i)
     local mapName  = detectCurrentMapName()
 
     -- Respetar filtro incluso si no se pudo detectar el challenge (canonCh=="")
-    if Filter and mapName ~= "" then
-        local allowed = false
-        pcall(function()
-            if type(Filter.isAllowed) == "function" then
-                if canonCh ~= "" then
-                    -- Caso normal: challenge detectado
-                    allowed = Filter.isAllowed(mapName, canonCh)
-                else
-                    -- Fallback: si el mapa no tiene NINGÚN challenge seleccionado, debe quedar ignorado
-                    if type(Filter.isMapAllowed) == "function" then
-                        allowed = Filter.isMapAllowed(mapName)
-                    else
-                        allowed = false
-                    end
-                end
-            end
-        end)
+    if mapName ~= "" then
+        local allowed = isAllowedByFilter(mapName, canonCh)
         if not allowed then
+            -- Debug mínimo para inspección (puedes comentar si no quieres ruido):
+            warn(("[FindTB][Filter] Ignorado por filtro -> map='%s' challenge='%s'"):format(tostring(mapName), tostring(canonCh)))
             return {ok=true, index=i, filtered=true, map=mapName, challenge=canonCh, has_tb=false}
         end
     end
