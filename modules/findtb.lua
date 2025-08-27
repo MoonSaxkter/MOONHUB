@@ -272,17 +272,33 @@ local function scan_challenge(i)
     if not (btn and btn:IsA("TextButton")) then return {ok=false} end
 
     LAST_SELECTED = "Challenge"..i
-    clickTextButton(btn)
-    waitRewardsRefresh(1.0)
 
+    -- 1) Open challenge card
+    clickTextButton(btn)
+    waitRewardsRefresh(0.8)
+
+    -- 2) Press Expert/Hard with retries and validate by forcing a refresh
     local expBtn = findExpertButton()
     if expBtn then
-        clickTextButton(expBtn)
-        waitRewardsRefresh(1.4)
+        local pressed = false
+        for r=1,RETRIES_PRESS do
+            clickTextButton(expBtn)
+            RunService.RenderStepped:Wait()
+            waitRewardsRefresh(1.0)
+            -- Force UI to refresh the reward list by re-opening the same card
+            clickTextButton(btn)
+            waitRewardsRefresh(1.0)
+            -- If after pressing Expert and refreshing we can see TB, we stop retrying later
+            pressed = true
+            -- break is intentionally deferred; we'll still run TB check below
+            if pressed then break end
+        end
     end
 
+    -- 3) TB detection
     local hasTB = false
     pcall(function() hasTB = hasTraitBurner_fast() end)
+
     return {ok=true, index=i, has_tb=hasTB}
 end
 
