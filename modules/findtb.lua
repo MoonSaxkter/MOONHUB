@@ -253,22 +253,43 @@ local function waitRewardsRefresh(timeout)
 end
 
 local function findExpertButton()
+    -- 1) Try canonical path first
     local segments = {
         "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
         "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
         "DifficultFrame","Hard","Button"
     }
     local btn = descend(PG, segments, 3.0)
-    if btn and btn:IsA("TextButton") then return btn end
-    local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
-    if rr then
-        for _,n in ipairs(rr:GetDescendants()) do
+    if btn and btn:IsA("TextButton") and btn.Visible and btn.Active then
+        return btn
+    end
+
+    -- 2) Fallback: search inside RightFrame for any TextButton labeled Hard/Expert
+    local right = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
+    if right then
+        for _,n in ipairs(right:GetDescendants()) do
             if n:IsA("TextButton") then
                 local t = (n.Text or n.Name or ""):lower()
-                if t:find("expert",1,true) then return n end
+                if t:find("expert",1,true) or t:find("hard",1,true) then
+                    -- Prefer visible/active buttons only
+                    if n.Visible ~= false and n.Active ~= false then
+                        return n
+                    end
+                end
             end
         end
     end
+
+    -- 3) Last resort: look for any child named "Hard" with a Button under it
+    if right then
+        for _,n in ipairs(right:GetDescendants()) do
+            if n.Name == "Hard" then
+                local b = n:FindFirstChildWhichIsA("TextButton", true)
+                if b and b.Visible and b.Active then return b end
+            end
+        end
+    end
+
     return nil
 end
 
@@ -311,10 +332,19 @@ local function scan_challenge(i)
     clickTextButton(btn)
     waitRewardsRefresh(1.0)
 
+    -- Ensure EXPERT/HARD difficulty is pressed
+    local clicked = false
     local expBtn = findExpertButton()
     if expBtn then
-        clickTextButton(expBtn)
-        waitRewardsRefresh(1.6)
+        clicked = clickTextButton(expBtn)
+        waitRewardsRefresh(1.2)
+    end
+    if not clicked then
+        -- Try explicit press via the canonical path with retries
+        clicked = pressExpert()
+        if clicked then
+            waitRewardsRefresh(1.2)
+        end
     end
 
     local typeHint = (getChallengeTypeHint() or ""):lower()
