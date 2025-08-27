@@ -341,63 +341,48 @@ end
 -- - If challenge is empty/undetected => NOT allowed
 -- - Else allowed only if challenge is in the map's allowed set
 local function isAllowedByFilter(mapName, canonCh)
-    if not Filter then return true end
-    local allowed = true
+    -- Fail-closed if the filter module is not available
+    if not Filter then return false end
 
-    local function tableLen(t)
-        local n = 0
-        for _ in pairs(t) do n = n + 1 end
-        return n
+    -- If challenge is missing/undetected, do not allow
+    if (canonCh == nil) or (canonCh == "") then
+        return false
     end
 
-    local ok = pcall(function()
+    local ok, allowed = pcall(function()
+        -- Preferred: table of allowed challenges per map
         if type(Filter.getAllowed) == "function" then
-            local t = Filter.getAllowed(mapName)  -- preferred: returns array of allowed challenges or {}
+            local t = Filter.getAllowed(mapName)
             if type(t) == "table" then
-                -- If nothing configured for this map -> ignore map
-                if (#t == 0) or (tableLen(t) == 0) then
-                    allowed = false
-                    return
+                -- Empty map config => ignore this map
+                if next(t) == nil then
+                    return false
                 end
-                -- If challenge not detected -> treat as NOT allowed
-                if (canonCh == nil) or (canonCh == "") then
-                    allowed = false
-                    return
-                end
-                -- Build quick set for membership check (supports {array} or { [name]=true } )
+                -- Build a set to accept both array-style {"A","B"} and map-style {A=true,B=true}
                 local set = {}
                 for k, v in pairs(t) do
-                    if type(k) == "number" then
-                        if type(v) == "string" then set[v] = true end
+                    if type(k) == "number" and type(v) == "string" then
+                        set[v] = true
                     elseif type(k) == "string" and v == true then
                         set[k] = true
                     end
                 end
-                allowed = set[canonCh] == true
-                return
+                return set[canonCh] == true
             end
         end
 
-        -- Fallback path with isAllowed(map, challenge)
+        -- Fallback: direct query
         if type(Filter.isAllowed) == "function" then
-            if (canonCh == nil) or (canonCh == "") then
-                allowed = false   -- strict default: undetected challenge -> ignore
-            else
-                allowed = Filter.isAllowed(mapName, canonCh)
-            end
-            return
+            return Filter.isAllowed(mapName, canonCh) and true or false
         end
 
-        -- If we reach here, we couldn't consult filter -> default allow
-        allowed = true
+        -- If we couldn't consult the filter, block by default
+        return false
     end)
 
-    if not ok then
-        -- On any filter error, fail closed (ignore) to be safe.
-        allowed = false
-    end
-
-    return allowed
+    -- On any error evaluating the filter, block
+    if not ok then return false end
+    return allowed == true
 end
 
 local function clickTextButton(btn)
