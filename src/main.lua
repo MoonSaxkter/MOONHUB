@@ -401,278 +401,50 @@ tbDescription.TextYAlignment = Enum.TextYAlignment.Top
 tbDescription.TextWrapped = true
 tbDescription.Parent = findTBButton
 
--- ===== FIND TRAIT BURNER MODULE =====
-local FindTBModule = {}
+-- Toggle State Variable
+local isTBActive = false
+local FindTBModule = nil
 
--- Module configuration
-FindTBModule.config = {
-  UI_TIMEOUT_SEC = 20,
-  RETRIES_PRESS = 3,
-  WAIT_BETWEEN_TRY = 0.35,
-  TB_EVENT_WINDOW = 1.3,
-  CHAPTER = 1,
-  DIFFICULTY = "Hard",
-  RESCAN_EVERY_SEC = 5,
-  MAX_ROUNDS = 240
-}
-
--- Module state
-FindTBModule.state = {
-  LAST_SELECTED = "Challenge1",
-  ENTERED = false,
-  isRunning = false,
-  scanTask = nil
-}
-
--- Utility: Path traversal with timeout
-function FindTBModule.descend(root, segments, timeout)
-  local t0 = tick()
-  local node = root
-  for _, name in ipairs(segments) do
-    while not (node and node:FindFirstChild(name)) do
-      if tick() - t0 > (timeout or FindTBModule.config.UI_TIMEOUT_SEC) then
-        return nil
-      end
-      if not node then return nil end
-      node.ChildAdded:Wait()
-    end
-    node = node[name]
-  end
-  return node
-end
-
--- Get connections safely
-function FindTBModule.getConnections()
-  local okEnv, env = pcall(function() return getgenv and getgenv() end)
-  if okEnv and type(env) == "table" and type(env.getconnections) == "function" then
-    return env.getconnections
-  end
-  if type(getconnections) == "function" then
-    return getconnections
-  end
-  return nil
-end
-
--- Robust click implementation
-function FindTBModule.robustClick(btn)
-  if not (btn and btn:IsA("TextButton")) then return false end
-  
-  -- Try firesignal first
-  local fs = (getgenv and getgenv().firesignal) or (_G and _G.firesignal)
-  if type(fs) == "function" then
-    pcall(function()
-      if typeof(btn.MouseButton1Click) == "RBXScriptSignal" then fs(btn.MouseButton1Click) end
-      if typeof(btn.Activated) == "RBXScriptSignal" then fs(btn.Activated) end
-    end)
+local function ensureFindTB()
+  if FindTBModule then return true end
+  local ok, mod = pcall(function()
+    local url = "https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/findtb.lua"
+    local f = loadstring(game:HttpGet(url))
+    return f()
+  end)
+  if ok and type(mod) == "table" then
+    FindTBModule = mod
     return true
   end
-  
-  -- Try getconnections
-  local gc = FindTBModule.getConnections()
-  if gc then
-    pcall(function()
-      for _, signal in ipairs({btn.MouseButton1Click, btn.Activated}) do
-        if typeof(signal) == "RBXScriptSignal" then
-          for _, c in ipairs(gc(signal)) do
-            if c and c.Function and c.Connected ~= false then
-              pcall(c.Function)
-            end
-          end
-        end
-      end
-    end)
-    task.wait(0.02)
-  end
-  
-  -- Fallback to VirtualInputManager
-  pcall(function()
-    local vim = game:GetService("VirtualInputManager")
-    local center = btn.AbsolutePosition + (btn.AbsoluteSize / 2)
-    vim:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
-    vim:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
-  end)
-  
-  return true
-end
-
--- TP to Challenge Pod
-function FindTBModule.tpToChallengePod()
-  local obj = workspace:FindFirstChild("Map")
-    and workspace.Map:FindFirstChild("Buildings")
-    and workspace.Map.Buildings:FindFirstChild("ChallengePods")
-  
-  if obj and obj:FindFirstChild("Pod") and obj.Pod:FindFirstChild("Interact") then
-    obj = obj.Pod.Interact
-  else
-    local cp = obj
-    if cp then
-      for _, d in ipairs(cp:GetDescendants()) do
-        if d.Name == "Interact" then 
-          obj = d 
-          break 
-        end
-      end
-    end
-  end
-  
-  if not obj then return false end
-  
-  local ok = pcall(function()
-    local RF = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("GetFunction")
-    RF:InvokeServer({ Type = "Lobby", Object = obj, Mode = "Pod" })
-  end)
-  return ok
-end
-
--- Check for Trait Burner in rewards
-function FindTBModule.hasTraitBurner()
-  local PATH_REWARD_SCROLL = {
-    "MainUI", "WorldFrame", "WorldFrame", "MainFrame", "RightFrame", "InfoFrame", "InfoInner",
-    "BoxFrame", "InfoFrame2", "InnerFrame", "CanvasFrame", "CanvasGroup", "BottomFrame",
-    "DetailFrame", "RewardFrame", "Rewards", "RewardScroll"
-  }
-  
-  local scroll = FindTBModule.descend(player.PlayerGui, PATH_REWARD_SCROLL, 6.0)
-  if not scroll then return false end
-  
-  -- Deep scan for TB
-  for _, n in ipairs(scroll:GetDescendants()) do
-    if n:IsA("TextLabel") and n.Text then
-      local text = n.Text:lower()
-      if text:find("trait burner", 1, true) then
-        return true
-      end
-    end
-  end
-  
+  warn("[FindTB] failed to load external module: " .. tostring(mod))
   return false
 end
 
--- Main scan function
-function FindTBModule.scanChallenges()
-  if not FindTBModule.state.isRunning then return end
-  
-  -- TP to pod first
-  FindTBModule.tpToChallengePod()
-  task.wait(2)
-  
-  -- Scan each challenge
-  for i = 1, 4 do
-    if not FindTBModule.state.isRunning then break end
-    if FindTBModule.state.ENTERED then break end
-    
-    -- Click challenge button
-    local stageScroll = player.PlayerGui:FindFirstChild("MainUI", true)
-    if stageScroll then
-      stageScroll = stageScroll:FindFirstChild("StageScroll", true)
-      if stageScroll then
-        local challenge = stageScroll:FindFirstChild("Challenge" .. i)
-        if challenge then
-          local btn = challenge:FindFirstChild("Button")
-          if btn then
-            FindTBModule.robustClick(btn)
-            task.wait(1)
-            
-            -- Check for TB
-            if FindTBModule.hasTraitBurner() then
-              print("[FindTB] Found Trait Burner in Challenge " .. i)
-              FindTBModule.state.ENTERED = true
-              -- Start challenge
-              pcall(function()
-                local RF = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("GetFunction")
-                RF:InvokeServer({
-                  Chapter = FindTBModule.config.CHAPTER,
-                  Type = "Lobby",
-                  Name = "Challenge" .. i,
-                  Friend = true,
-                  Mode = "Pod",
-                  Update = true,
-                  Difficulty = FindTBModule.config.DIFFICULTY
-                })
-              end)
-              break
-            end
-          end
-        end
-      end
-    end
-    
-    task.wait(0.5)
-  end
-end
-
--- Start scanning
-function FindTBModule.start()
-  if FindTBModule.state.isRunning then return end
-  
-  FindTBModule.state.isRunning = true
-  FindTBModule.state.ENTERED = false
-  
-  print("[FindTB] Starting Trait Burner search...")
-  
-  -- Initial scan
-  FindTBModule.scanChallenges()
-  
-  -- Auto rescan
-  FindTBModule.state.scanTask = task.spawn(function()
-    for round = 1, FindTBModule.config.MAX_ROUNDS do
-      if not FindTBModule.state.isRunning then break end
-      if FindTBModule.state.ENTERED then break end
-      
-      task.wait(FindTBModule.config.RESCAN_EVERY_SEC)
-      FindTBModule.scanChallenges()
-    end
-  end)
-end
-
--- Stop scanning
-function FindTBModule.stop()
-  FindTBModule.state.isRunning = false
-  if FindTBModule.state.scanTask then
-    task.cancel(FindTBModule.state.scanTask)
-    FindTBModule.state.scanTask = nil
-  end
-  print("[FindTB] Stopped Trait Burner search")
-end
-
--- Toggle State Variable
-local isTBActive = false
-
--- Toggle Functionality
 local function toggleTB()
   isTBActive = not isTBActive
-  
   if isTBActive then
-    -- Animate to ON
-    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
-      Position = UDim2.new(1, -24, 0.5, 0),
-      AnchorPoint = Vector2.new(0, 0.5)
-    }):Play()
-    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), {
-      BackgroundColor3 = COLORS.accent
-    }):Play()
-    
-    -- Start FindTB module
-    FindTBModule.start()
+    -- UI ON
+    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0,0.5) }):Play()
+    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = COLORS.accent }):Play()
+
+    -- Only signal and call the external module
+    _G.FindTBActive = true
+    ensureFindTB()
   else
-    -- Animate to OFF
-    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
-      Position = UDim2.new(0, 2, 0.5, 0),
-      AnchorPoint = Vector2.new(0, 0.5)
-    }):Play()
-    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), {
-      BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    }):Play()
-    
-    -- Stop FindTB module
-    FindTBModule.stop()
+    -- UI OFF
+    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0,0.5) }):Play()
+    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(20,20,20) }):Play()
+
+    -- Tell the external module to stop and lower the flag
+    _G.FindTBActive = false
+    if FindTBModule and FindTBModule.stop then
+      pcall(FindTBModule.stop)
+    end
   end
 end
 
--- Make toggle clickable
 toggleSwitch.InputBegan:Connect(function(input)
-  if input.UserInputType == Enum.UserInputType.MouseButton1 or 
-     input.UserInputType == Enum.UserInputType.Touch then
+  if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
     toggleTB()
   end
 end)
