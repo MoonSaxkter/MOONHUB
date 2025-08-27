@@ -16,27 +16,31 @@ if not player then
   return
 end
 
--- ===== BOOT GATE + LOADING OVERLAY (to avoid clashing with game loading) =====
-repeat task.wait() until game:IsLoaded()
+-- Show the loader immediately (even before game:IsLoaded) by parenting to CoreGui,
+-- then reparent to PlayerGui when available. This guarantees we see the % panel
+-- during the "Loading Data 0%" phase when running from autoexec.
 
-local function isSafeToStart()
-  local okMain = false
-  local okRemotes = false
-  local pg = player:FindFirstChild("PlayerGui")
-  if pg then
-    okMain = pg:FindFirstChild("MainUI", true) ~= nil
-  end
-  okRemotes = ReplicatedStorage:FindFirstChild("Remotes") ~= nil
-  return okMain and okRemotes
+local function getUILayer()
+  local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+  if ok and cg then return cg end
+  -- fallback if CoreGui is blocked by the executor
+  return Players.LocalPlayer:WaitForChild("PlayerGui")
 end
 
--- Minimal loader overlay
 local loaderGui = Instance.new("ScreenGui")
 loaderGui.Name = "MoonHubLoader"
 loaderGui.ResetOnSpawn = false
 loaderGui.IgnoreGuiInset = true
 loaderGui.DisplayOrder = 10000
-loaderGui.Parent = player:WaitForChild("PlayerGui")
+loaderGui.Parent = getUILayer()
+
+-- If PlayerGui appears later, move the loader there so it follows respawns, etc.
+spawn(function()
+  local pg = player:WaitForChild("PlayerGui")
+  if loaderGui and loaderGui.Parent ~= pg then
+    loaderGui.Parent = pg
+  end
+end)
 
 local overlay = Instance.new("Frame")
 overlay.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
@@ -91,12 +95,31 @@ barFill.Size = UDim2.new(0, 0, 1, 0)
 barFill.Parent = barBg
 _corner(barFill, 6)
 
--- Progress loop: we animate percent while waiting for readiness signals
-local t0 = os.clock()
-local timeout = 30 -- hard cap so it never blocks forever
-local p = 0
-while not isSafeToStart() and (os.clock() - t0) < timeout do
-  p = math.min(95, math.floor(((os.clock() - t0) / timeout) * 100))
+-- Readiness probes
+local function isSafeToStart()
+  local okMain, okRemotes = false, false
+  local pg = player:FindFirstChild("PlayerGui")
+  if pg then okMain = pg:FindFirstChild("MainUI", true) ~= nil end
+  okRemotes = ReplicatedStorage:FindFirstChild("Remotes") ~= nil
+  return okMain and okRemotes
+end
+
+-- Animate percent while waiting for either game:IsLoaded() and our readiness probes
+local t0   = os.clock()
+local cap  = 30  -- hard cap so it never blocks forever
+local p    = 0
+
+while (not game:IsLoaded()) and (os.clock() - t0) < cap do
+  p = math.min(50, math.floor(((os.clock() - t0) / cap) * 100))
+  pct.Text = ("Loading… %d%%"):format(p)
+  barFill.Size = UDim2.new(p/100, 0, 1, 0)
+  task.wait(0.1)
+end
+
+local t1 = os.clock()
+while (not isSafeToStart()) and (os.clock() - t1) < cap do
+  -- continue from current p up to 95%
+  p = math.min(95, p + 1)
   pct.Text = ("Loading… %d%%"):format(p)
   barFill.Size = UDim2.new(p/100, 0, 1, 0)
   task.wait(0.1)
@@ -108,7 +131,7 @@ barFill.Size = UDim2.new(1, 0, 1, 0)
 
 -- small delay to let UI settle
 task.wait(0.15)
-loaderGui:Destroy()
+if loaderGui then loaderGui:Destroy() end
 -- ===== END BOOT GATE =====
 
 -- Limpieza previa
