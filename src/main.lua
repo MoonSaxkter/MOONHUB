@@ -776,6 +776,18 @@ filterDesc.Parent = filterSection
 
 -- === Filter map list with multi-select challenge dropdowns ===
 local FILTER = getgenv and getgenv().MoonFilter
+if not FILTER then
+  local ok, mod = pcall(function()
+    local url = "https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/filter.lua"
+    return loadstring(game:HttpGet(url))()
+  end)
+  if ok and type(mod)=="table" then
+    FILTER = mod
+    if getgenv then getgenv().MoonFilter = mod end
+  else
+    warn("[Filter] Failed to autoload filter.lua: "..tostring(mod))
+  end
+end
 
 -- Maps available for Challenges UI
 local MAPS = {
@@ -1168,6 +1180,7 @@ statusText.TextXAlignment = Enum.TextXAlignment.Left
 statusText.Parent = controlPanel
 
 
+
 local statusDesc = Instance.new("TextLabel")
 statusDesc.Text = "Ready to record"
 statusDesc.TextColor3 = COLORS.text_dim
@@ -1178,6 +1191,8 @@ statusDesc.Size = UDim2.new(0, 200, 0, 20)
 statusDesc.Position = UDim2.new(0, 35, 0, 30)
 statusDesc.TextXAlignment = Enum.TextXAlignment.Left
 statusDesc.Parent = controlPanel
+-- forward declaration so helpers above can call it before its definition
+local updateStatus
 
 
 -- ===== FILESYSTEM HELPERS (moved up so dropdown can use them) =====
@@ -2197,7 +2212,7 @@ end
 
 
 -- Update status function
-local function updateStatus(state, description)
+updateStatus = function(state, description)
   statusText.Text = state:upper()
   statusDesc.Text = description
   

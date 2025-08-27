@@ -138,26 +138,6 @@ local function tpToChallengePod()
     return ok
 end
 
--- ------------------------------------------------------------
--- EXPERT (Hard.Button)
--- ------------------------------------------------------------
-local function pressExpert()
-    local segments = {
-        "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
-        "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
-        "DifficultFrame","Hard","Button"
-    }
-    local btn = descend(PG, segments, 6.0)
-    if not btn then return false end
-    local ok = false
-    for _=1,RETRIES_PRESS do
-        ok = select(1, pcall(function() robustClick(btn) end))
-        if ok then break end
-        task.wait(WAIT_BETWEEN_TRY)
-    end
-    Run.RenderStepped:Wait(); Run.RenderStepped:Wait()
-    return ok
-end
 
 -- ------------------------------------------------------------
 -- Trait Burner detector (ligero)
@@ -286,10 +266,27 @@ local CHALLENGE_KEYWORDS = {
     "double hp","more hp"
 }
 
+-- Escanea RightFrame para deducir el “hint” de challenge (texto libre del UI)
+local function getChallengeTypeHint()
+    local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
+    if not rr then return "" end
+    for _,n in ipairs(rr:GetDescendants()) do
+        if n:IsA("TextLabel") and n.Text and #n.Text > 0 then
+            local tx = n.Text:lower()
+            for _,kw in ipairs(CHALLENGE_KEYWORDS) do
+                if tx:find(kw, 1, true) then
+                    return kw
+                end
+            end
+        end
+    end
+    return ""
+end
+
 -- Detect current map name by scanning the RightFrame texts against the known map list
 local function detectCurrentMapName()
     local maps = {}
-    if Filter and Filter.listMaps then
+    if Filter and type(Filter.listMaps) == "function" then
         maps = Filter.listMaps()
     else
         maps = {
@@ -366,7 +363,7 @@ local function scan_challenge(i)
     local mapName  = detectCurrentMapName()
 
     -- Si el filtro existe y define que este mapa/challenge no está permitido, saltar silenciosamente
-    if Filter and canonCh ~= "" and mapName ~= "" then
+    if Filter and type(Filter.isAllowed) == "function" and canonCh ~= "" and mapName ~= "" then
         if not Filter.isAllowed(mapName, canonCh) then
             return {ok=true, index=i, filtered=true, map=mapName, challenge=canonCh, has_tb=false}
         end
