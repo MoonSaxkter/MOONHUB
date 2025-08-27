@@ -811,22 +811,25 @@ local CHALLENGE_OPTS = {
 -- Persist UI selection in memory and forward to Filter module if present
 local FilterSelections = {}
 
-local function syncFilter(mapKey)
-  -- Convert set -> array
+local function syncFilter(mapLabel)
+  -- Convert set -> array of challenge *labels*
   local list = {}
-  if FilterSelections[mapKey] then
-    for k, v in pairs(FilterSelections[mapKey]) do
-      if v then table.insert(list, k) end
+  local set = FilterSelections[mapLabel]
+  if set then
+    for challengeLabel, v in pairs(set) do
+      if v then table.insert(list, challengeLabel) end
     end
   end
-  -- Push to filter module if available
+  -- Push to filter module using the *display label* for the map
   pcall(function()
-    if FILTER and type(FILTER.set) == "function" then
-      FILTER.set(mapKey, list)
+    if FILTER and type(FILTER.setAllowed) == "function" then
+      FILTER.setAllowed(mapLabel, list)
+    elseif FILTER and type(FILTER.set) == "function" then
+      FILTER.set(mapLabel, list)
     elseif FILTER and type(FILTER.setMap) == "function" then
-      FILTER.setMap(mapKey, list)
+      FILTER.setMap(mapLabel, list)
     elseif FILTER and type(FILTER.replaceOne) == "function" then
-      FILTER.replaceOne(mapKey, list)
+      FILTER.replaceOne(mapLabel, list)
     end
   end)
 end
@@ -981,14 +984,14 @@ local function createMapFilter(map)
   end
   
   -- Initialize selection set from module (if any)
-  FilterSelections[map.key] = FilterSelections[map.key] or {}
+  FilterSelections[map.label] = FilterSelections[map.label] or {}
   pcall(function()
     if FILTER and type(FILTER.get) == "function" then
-      local arr = FILTER.get(map.key) or {}
-      for _,k in ipairs(arr) do FilterSelections[map.key][k] = true end
+      local arr = FILTER.get(map.label) or {}
+      for _,k in ipairs(arr) do FilterSelections[map.label][k] = true end
     elseif FILTER and type(FILTER.getMap) == "function" then
-      local arr = FILTER.getMap(map.key) or {}
-      for _,k in ipairs(arr) do FilterSelections[map.key][k] = true end
+      local arr = FILTER.getMap(map.label) or {}
+      for _,k in ipairs(arr) do FilterSelections[map.label][k] = true end
     end
   end)
 
@@ -1037,17 +1040,17 @@ local function createMapFilter(map)
     lab.ZIndex = 14
 
     local function refresh()
-      local on = FilterSelections[map.key][opt.key] == true
+      local on = FilterSelections[map.label][opt.label] == true
       box.BackgroundColor3 = on and COLORS.accent or COLORS.background_secondary
       tick.Text = on and "✓" or ""
     end
 
     orow.MouseButton1Click:Connect(function()
-      local cur = FilterSelections[map.key][opt.key]
-      FilterSelections[map.key][opt.key] = not cur and true or nil
-      btn.Text = summarizeSelection(FilterSelections[map.key]) .. " ▾"
+      local cur = FilterSelections[map.label][opt.label]
+      FilterSelections[map.label][opt.label] = not cur and true or nil
+      btn.Text = summarizeSelection(FilterSelections[map.label]) .. " ▾"
       refresh()
-      syncFilter(map.key)
+      syncFilter(map.label)
       closePopup()
     end)
 
@@ -1076,7 +1079,7 @@ local function createMapFilter(map)
   end)
 
   -- Initialize button summary text
-  btn.Text = summarizeSelection(FilterSelections[map.key]) .. " ▾"
+  btn.Text = summarizeSelection(FilterSelections[map.label]) .. " ▾"
 end
 
 for _,m in ipairs(MAPS) do
