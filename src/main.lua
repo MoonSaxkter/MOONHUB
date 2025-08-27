@@ -30,32 +30,6 @@ local function isSafeToStart()
   return okMain and okRemotes
 end
 
-local function hasHUDReady()
-  local ok, premiumLabel, cashLabel = pcall(function()
-    local pg = player:FindFirstChild("PlayerGui")
-    if not pg then return nil, nil end
-    local mainUI = pg:FindFirstChild("MainUI", true)
-    if not mainUI then return nil, nil end
-    local function findPath(root, ...)
-      local cur = root
-      for _, name in ipairs({...}) do
-        cur = cur and cur:FindFirstChild(name)
-        if not cur then return nil end
-      end
-      return cur
-    end
-    local premium = findPath(mainUI, "MenuFrame", "BottomFrame", "BottomExpand", "CashFrame", "Premium", "ExpandFrame", "TextLabel")
-    local cash    = findPath(mainUI, "MenuFrame", "BottomFrame", "BottomExpand", "CashFrame", "Cash",    "ExpandFrame", "TextLabel")
-    return premium, cash
-  end)
-  if not ok then return false end
-  if not premiumLabel or not cashLabel then return false end
-  -- If either already has non-empty text, consider HUD ready
-  local premText = tostring(premiumLabel.Text or "")
-  local cashText = tostring(cashLabel.Text or "")
-  return (#premText > 0) and (#cashText > 0)
-end
-
 -- Minimal loader overlay
 local loaderGui = Instance.new("ScreenGui")
 loaderGui.Name = "MoonHubLoader"
@@ -117,17 +91,11 @@ barFill.Size = UDim2.new(0, 0, 1, 0)
 barFill.Parent = barBg
 _corner(barFill, 6)
 
-
+-- Progress loop: we animate percent while waiting for readiness signals
 local t0 = os.clock()
 local timeout = 30 -- hard cap so it never blocks forever
 local p = 0
-while (os.clock() - t0) < timeout do
-  -- If game core bits are ready OR HUD (gems & gold) is visible, we can finish now
-  if isSafeToStart() or hasHUDReady() then
-    p = 100
-    break
-  end
-  -- Otherwise animate up to 95% while waiting
+while not isSafeToStart() and (os.clock() - t0) < timeout do
   p = math.min(95, math.floor(((os.clock() - t0) / timeout) * 100))
   pct.Text = ("Loading… %d%%"):format(p)
   barFill.Size = UDim2.new(p/100, 0, 1, 0)
