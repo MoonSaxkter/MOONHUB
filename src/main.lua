@@ -10,65 +10,6 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 
--- ===== FILESYSTEM + CONFIG (moved early) =====
--- FS helpers
-local FS = {}
-do
-  local g = getgenv and getgenv() or _G or {}
-  FS.writefile  = rawget(g, "writefile") or (rawget(g, "syn") and g.syn.writefile) or (rawget(g, "krnl") and g.krnl.writefile)
-  FS.appendfile = rawget(g, "appendfile") or (rawget(g, "syn") and g.syn.appendfile)
-  FS.isfile     = rawget(g, "isfile")     or (rawget(g, "syn") and g.syn.isfile)
-  FS.isfolder   = rawget(g, "isfolder")   or (rawget(g, "syn") and g.syn.isfolder)
-  FS.makefolder = rawget(g, "makefolder") or (rawget(g, "syn") and g.syn.makefolder)
-  FS.listfiles  = rawget(g, "listfiles")  or (rawget(g, "syn") and g.syn.listfiles) or rawget(g, "getfiles")
-  FS.readfile   = rawget(g, "readfile")   or (rawget(g, "syn") and g.syn.readfile)  or (rawget(g, "krnl") and g.krnl.readfile)
-  FS.delfile    = rawget(g, "delfile")    or (rawget(g, "syn") and g.syn.delfile)   or (rawget(g, "krnl") and g.krnl.delfile)
-end
-
-local function ensureFolder(path)
-  if FS.isfolder and not FS.isfolder(path) then
-    pcall(FS.makefolder, path)
-  elseif FS.makefolder then
-    pcall(FS.makefolder, path)
-  end
-end
-
-local HttpService = game:GetService("HttpService")
-local Config = { path = "Moon_Config/config.json", data = {} }
-
-local function saveConfig()
-  if not FS.writefile then return end
-  local ok, json = pcall(function() return HttpService:JSONEncode(Config.data) end)
-  if ok then
-    ensureFolder("Moon_Config")
-    pcall(FS.writefile, Config.path, json)
-  end
-end
-
-local function loadConfig()
-  if FS.isfile and FS.isfile(Config.path) and FS.readfile then
-    local ok, raw = pcall(FS.readfile, Config.path)
-    if ok and raw and #raw > 0 then
-      local ok2, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
-      if ok2 and type(decoded) == "table" then
-        Config.data = decoded
-      end
-    end
-  end
-end
-
-loadConfig()
-
--- Defaults for persisted UI state
-Config.data.toggles = Config.data.toggles or {
-  findTB    = false,
-  autoReplay= false,
-  autoSelect= false,
-}
-Config.data.selectedMacro = (Config.data.selectedMacro ~= nil) and Config.data.selectedMacro or nil
--- ensure the config file exists on first run
-saveConfig()
-
 
 -- Minimal helpers for the loader (avoid forward-reference to UI utils below)
 local function _corner(parent, radius)
@@ -786,6 +727,7 @@ toggleKnob.Parent = toggleSwitch
 createCorner(toggleKnob, 11)
 
 -- No toggle state label for cleaner aesthetics
+
 local tbDescription = Instance.new("TextLabel")
 tbDescription.Text = "With this function active you can search for Trait Burners in challenge, efficient for light farming. If you want to search for trait burners every time you return to the lobby, keep it active."
 tbDescription.TextColor3 = COLORS.text_dim
@@ -862,9 +804,8 @@ local MAPS = {
 local CHALLENGE_OPTS = {
   { label = "Flying Enemies",     key = "flying_enemies" },
   { label = "Juggernaut Enemies", key = "juggernaut_enemies" },
-  { label = "Single Placement",   key = "single_placement" },
-  { label = "High Cost",          key = "high_cost" },
-  { label = "Unsellable",         key = "unsellable" },
+  { label = "Single Placement",    key = "single_placement" },
+  { label = "High Cost",           key = "high_cost" },
 }
 
 -- Deny-by-default bootstrap (now that MAPS is defined)
@@ -921,12 +862,6 @@ local function syncFilter(mapLabel)
       if v then table.insert(list, challengeLabel) end
     end
   end
-
-  -- Persist into config
-  Config.data.filterSelections = Config.data.filterSelections or {}
-  Config.data.filterSelections[mapLabel] = list
-  saveConfig()
-  
   -- Push to filter module using the *display label* for the map
   pcall(function()
     if FILTER and type(FILTER.setAllowed) == "function" then
@@ -989,8 +924,9 @@ local function updateFilterCanvas()
   filterList.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 20)
 end
 listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateFilterCanvas)
+
 -- Track a single open dropdown row so only one can be expanded at a time
-local openFilterRow = nil
+local openFilterRow: Frame? = nil
 local function collapseOpenRow()
   if openFilterRow and openFilterRow.Parent then
     local popup = openFilterRow:FindFirstChild("Popup")
@@ -1100,17 +1036,6 @@ local function createMapFilter(map)
       for _,k in ipairs(arr) do FilterSelections[map.label][k] = true end
     end
   end)
-
-  -- Merge persisted selections from Config (disk) if present
-  if Config and Config.data and Config.data.filterSelections and Config.data.filterSelections[map.label] then
-    for _, k in ipairs(Config.data.filterSelections[map.label]) do
-      FilterSelections[map.label][k] = true
-    end
-  end
-
-  -- Push initial (possibly merged) selection to the filter module and persist
-  -- (no-op changes are fine; keeps UI, module and config in sync)
-  syncFilter(map.label)
 
   -- Build check rows
   local function addOption(opt)
@@ -1238,26 +1163,6 @@ local function ensureFindTB()
   return false
 end
 
--- Restore persisted state for FindTB
-do
-  local on = Config and Config.data and Config.data.toggles and Config.data.toggles.findTB
-  if on then
-    isTBActive = true
-    toggleKnob.Position = UDim2.new(1, -24, 0.5, 0)
-    toggleSwitch.BackgroundColor3 = COLORS.accent
-    _G.FindTBActive = true
-    if ensureFindTB() and FindTBModule and FindTBModule.start then
-      pcall(FindTBModule.start)
-    end
-  else
-    isTBActive = false
-    toggleKnob.Position = UDim2.new(0, 2, 0.5, 0)
-    toggleSwitch.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    _G.FindTBActive = false
-  end
-end
-
-
 local function toggleTB()
   isTBActive = not isTBActive
   if isTBActive then
@@ -1265,26 +1170,20 @@ local function toggleTB()
     TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0,0.5) }):Play()
     TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = COLORS.accent }):Play()
 
-
     -- Only signal and call the external module
     _G.FindTBActive = true
     if ensureFindTB() and FindTBModule and FindTBModule.start then
       pcall(FindTBModule.start)
-      Config.data.toggles.findTB = true
-      saveConfig()
     end
   else
     -- UI OFF
     TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0,0.5) }):Play()
     TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(20,20,20) }):Play()
-  
 
     -- Tell the external module to stop and lower the flag
     _G.FindTBActive = false
     if FindTBModule and FindTBModule.stop then
       pcall(FindTBModule.stop)
-      Config.data.toggles.findTB = false
-      saveConfig()
     end
   end
 end
@@ -1400,6 +1299,19 @@ statusDesc.Parent = controlPanel
 -- forward declaration so helpers above can call it before its definition
 local updateStatus
 
+
+-- ===== FILESYSTEM HELPERS (moved up so dropdown can use them) =====
+local FS = {}
+do
+  local g = getgenv and getgenv() or _G or {}
+  FS.writefile  = rawget(g, "writefile") or (rawget(g, "syn") and g.syn.writefile) or (rawget(g, "krnl") and g.krnl.writefile)
+  FS.appendfile = rawget(g, "appendfile") or (rawget(g, "syn") and g.syn.appendfile)
+  FS.isfile     = rawget(g, "isfile")     or (rawget(g, "syn") and g.syn.isfile)
+  FS.isfolder   = rawget(g, "isfolder")   or (rawget(g, "syn") and g.syn.isfolder)
+  FS.makefolder = rawget(g, "makefolder") or (rawget(g, "syn") and g.syn.makefolder)
+  FS.listfiles  = rawget(g, "listfiles")  or (rawget(g, "syn") and g.syn.listfiles) or rawget(g, "getfiles")
+end
+
 local function basename(path)
   if not path then return nil end
   local name = path:match("([^/\\]+)$")
@@ -1408,6 +1320,14 @@ end
 
 local function strip_json(extname)
   return extname and extname:gsub("%.json$", "") or extname
+end
+
+local function ensureFolder(path)
+  if FS.isfolder and not FS.isfolder(path) then
+    pcall(FS.makefolder, path)
+  elseif FS.makefolder then
+    pcall(FS.makefolder, path)
+  end
 end
 
 local function sanitizeName(s)
@@ -1477,17 +1397,6 @@ selectBtn.Parent = macroPicker
 selectBtn.ZIndex = 55
 createCorner(selectBtn, 8)
 local selectBtnStroke = createStroke(selectBtn, COLORS.border, 1, 0.7)
-
--- Restore previously selected macro from config (if any)
-if Config and Config.data and Config.data.selectedMacro then
-  selectedMacroName = Config.data.selectedMacro
-  local display = selectedMacroName
-  if type(display) == "string" then
-    local bn = display:match("([^/\\]+)$") or display
-    display = bn:gsub("%.json$","")
-  end
-  selectBtn.Text = tostring(display) .. " ▾"
-end
 
 -- Visual feedback when a macro is selected from the dropdown
 local function flashMacroChosenFeedback()
@@ -1580,8 +1489,6 @@ local function addDropdownItem(displayText, fullPath)
     selectedMacroName = macroIndex[displayText]
     selectBtn.Text = displayText .. " ▾"
     dropdownList.Visible = false
-    Config.data.selectedMacro = selectedMacroName
-    saveConfig()
     flashMacroChosenFeedback()
   end)
 end
@@ -2116,31 +2023,10 @@ local function toggleAutoReplay()
   if AutoReplay.enabled then
     TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
     TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
-    Config.data.toggles = Config.data.toggles or {}
-    Config.data.toggles.autoReplay = true
-    saveConfig()
     ensureAutoReplayLoop()
   else
     TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
     TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20, 20, 20)}):Play()
-    Config.data.toggles = Config.data.toggles or {}
-    Config.data.toggles.autoReplay = false
-    saveConfig()
-  end
-end
-
--- Restore persisted state for Auto Replay
-do
-  local on = Config and Config.data and Config.data.toggles and Config.data.toggles.autoReplay
-  if on then
-    AutoReplay.enabled = true
-    arKnob.Position = UDim2.new(1, -24, 0.5, 0)
-    arSwitch.BackgroundColor3 = COLORS.accent
-    ensureAutoReplayLoop()
-  else
-    AutoReplay.enabled = false
-    arKnob.Position = UDim2.new(0, 2, 0.5, 0)
-    arSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
   end
 end
 
@@ -2207,55 +2093,6 @@ asDesc.TextXAlignment = Enum.TextXAlignment.Left
 asDesc.TextYAlignment = Enum.TextYAlignment.Top
 asDesc.TextWrapped = true
 asDesc.Parent = autoSelectBox
-
--- Logic state for Auto Select
-local AutoSelect = { enabled = false }
-
-local function setAutoSelectVisual(on)
-  if on then
-    asKnob.Position = UDim2.new(1, -24, 0.5, 0)
-    asSwitch.BackgroundColor3 = COLORS.accent
-  else
-    asKnob.Position = UDim2.new(0, 2, 0.5, 0)
-    asSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-  end
-end
-
-local function toggleAutoSelect()
-  AutoSelect.enabled = not AutoSelect.enabled
-
-  -- Persist
-  Config.data.toggles = Config.data.toggles or {}
-  Config.data.toggles.autoSelect = AutoSelect.enabled and true or false
-  saveConfig()
-
-  -- Visual
-  setAutoSelectVisual(AutoSelect.enabled)
-
-  -- Regla de exclusión con Auto Replay: si activas Auto Select, apaga Auto Replay
-  if AutoSelect.enabled and AutoReplay and AutoReplay.enabled then
-    AutoReplay.enabled = false
-    -- reflejar visualmente el otro switch
-    arKnob.Position = UDim2.new(0, 2, 0.5, 0)
-    arSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    Config.data.toggles.autoReplay = false
-    saveConfig()
-  end
-end
-
--- Restaurar estado al arrancar
-do
-  local on = Config and Config.data and Config.data.toggles and Config.data.toggles.autoSelect
-  AutoSelect.enabled = not not on
-  setAutoSelectVisual(AutoSelect.enabled)
-end
-
--- Click handler
-asSwitch.InputBegan:Connect(function(input)
-  if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-    toggleAutoSelect()
-  end
-end)
 
 -- ===== AUTO SELECT MACRO INFO PANEL =====
 -- Info panel explaining macro file naming
@@ -2358,31 +2195,6 @@ end)
 -- Logic state
 local AutoSelect = { enabled = false, task = nil, lastPick = nil }
 
--- Restore persisted state for Auto Select Macro
-do
-  local on = Config and Config.data and Config.data.toggles and Config.data.toggles.autoSelect
-  if on then
-    AutoSelect.enabled = true
-    asKnob.Position = UDim2.new(1, -24, 0.5, 0)
-    asSwitch.BackgroundColor3 = COLORS.accent
-  else
-    AutoSelect.enabled = false
-    asKnob.Position = UDim2.new(0, 2, 0.5, 0)
-    asSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-  end
-end
-
-  if on then
-    AutoSelect.enabled = true
-    asKnob.Position = UDim2.new(1, -24, 0.5, 0)
-    asSwitch.BackgroundColor3 = COLORS.accent
-  else
-    AutoSelect.enabled = false
-    asKnob.Position = UDim2.new(0, 2, 0.5, 0)
-    asSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-  end
-end
-
 local function getMapAndChallenge()
   local mapName, challengeName
   pcall(function()
@@ -2391,27 +2203,678 @@ local function getMapAndChallenge()
       mapName = workspace.Map.Name
     end
     -- Use our FindTBModule memory if present
-    if FindTBModule and FindTBModule.state and FindTBModule.state.L<truncated__content/>
--- Toggle handler for Auto Select Macro
+    if FindTBModule and FindTBModule.state and FindTBModule.state.LAST_SELECTED then
+      challengeName = tostring(FindTBModule.state.LAST_SELECTED)
+    end
+    -- Try to read current open stage UI if available
+    local main = player.PlayerGui:FindFirstChild("MainUI", true)
+    if main then
+      local stage = main:FindFirstChild("StageScroll", true)
+      if stage and stage.Parent and stage.Parent:FindFirstChild("Title") and stage.Parent.Title:IsA("TextLabel") then
+        local t = stage.Parent.Title.Text
+        if t and #t > 0 then mapName = t end
+      end
+    end
+  end)
+  return (mapName and mapName:lower() or nil), (challengeName and challengeName:lower() or nil)
+end
+
+local function chooseMacroForContext()
+  local list
+  pcall(function()
+    if getgenv and getgenv().MacroManager and getgenv().MacroManager.list then
+      list = getgenv().MacroManager.list()
+    elseif getgenv and getgenv().MacroAPI and getgenv().MacroAPI.list then
+      list = getgenv().MacroAPI.list()
+    end
+  end)
+  if type(list) ~= "table" or #list == 0 then return nil end
+
+  local map, chal = getMapAndChallenge()
+  local best, bestScore
+  for _, name in ipairs(list) do
+    local n = tostring(name):lower()
+    local score = 0
+    if map and n:find(map, 1, true) then score = score + #map end
+    if chal and n:find(chal, 1, true) then score = score + #chal end
+    if n:find("challenge", 1, true) and chal == nil then score = score + 3 end
+    if score > 0 and (not bestScore or score > bestScore) then
+      best, bestScore = name, score
+    end
+  end
+  return best
+end
+
+local function applySelectedMacro(name)
+  if not name then return end
+  selectedMacroName = name
+  selectBtn.Text = name .. " ▾"
+  -- Notify external API of selection if supported
+  pcall(function()
+    if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.load then
+      getgenv().MacroAPI.load(name)
+    elseif getgenv and getgenv().MacroManager and getgenv().MacroManager.select then
+      getgenv().MacroManager.select(name)
+    end
+  end)
+end
+
+local function ensureAutoSelectLoop()
+  if AutoSelect.task ~= nil then return end
+  AutoSelect.task = task.spawn(function()
+    while AutoSelect.enabled do
+      local pick = chooseMacroForContext()
+      if pick and pick ~= AutoSelect.lastPick then
+        AutoSelect.lastPick = pick
+        applySelectedMacro(pick)
+        updateStatus("idle", "Auto selected: " .. tostring(pick))
+      end
+      task.wait(2.0)
+    end
+    AutoSelect.task = nil
+  end)
+end
+
 local function toggleAutoSelect()
   AutoSelect.enabled = not AutoSelect.enabled
   if AutoSelect.enabled then
-    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
+    -- Si Auto replay está encendido, apágalo para evitar conflictos
+    if AutoReplay and AutoReplay.enabled then
+      toggleAutoReplay()
+    end
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -24, 0.5, 0)}):Play()
     TweenService:Create(asSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
-    Config.data.toggles = Config.data.toggles or {}
-    Config.data.toggles.autoSelect = true
-    saveConfig()
+
+    -- pick inicial
+    local initial = chooseMacroForContext()
+    if initial then applySelectedMacro(initial) end
+    ensureAutoSelectLoop()
   else
-    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(0, 2, 0.5, 0)}):Play()
     TweenService:Create(asSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20, 20, 20)}):Play()
-    Config.data.toggles = Config.data.toggles or {}
-    Config.data.toggles.autoSelect = false
-    saveConfig()
   end
 end
 
+-- Bind: toggle Auto Select por clic/toque
 asSwitch.InputBegan:Connect(function(input)
   if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
     toggleAutoSelect()
   end
 end)
+
+-- Último ajuste de canvas por si algo cambió al final
+recomputeCanvas()
+
+-- Prevent enabling Auto replay while Auto select is active
+local oldToggleAutoReplay = toggleAutoReplay
+toggleAutoReplay = function()
+  if AutoSelect and AutoSelect.enabled then
+    updateStatus("idle", "Disable Auto select macro first")
+    -- Brief flash feedback on the Auto replay switch
+    TweenService:Create(arSwitch, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(220,80,80)}):Play()
+    task.delay(0.2, function()
+      TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = (AutoReplay.enabled and COLORS.accent) or Color3.fromRGB(20,20,20)}):Play()
+    end)
+    return
+  end
+  oldToggleAutoReplay()
+end
+
+
+-- Update status function
+updateStatus = function(state, description)
+  statusText.Text = state:upper()
+  statusDesc.Text = description
+  
+  if state == "recording" then
+    statusIndicator.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+    TweenService:Create(statusPulse, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+      Transparency = 0
+    }):Play()
+  elseif state == "playing" then
+    statusIndicator.BackgroundColor3 = Color3.fromRGB(60, 180, 75)
+    TweenService:Create(statusPulse, TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+      Transparency = 0
+    }):Play()
+  else
+    statusIndicator.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
+    TweenService:Create(statusPulse, TweenInfo.new(0.2), {Transparency = 0.5}):Play()
+  end
+end
+
+local addActionToList  -- forward declaration for action list appender
+
+local function applyRecorderStatus(msg)
+  local s = tostring(msg or "")
+  local l = s:lower()
+
+  -- Transient saving indicator on end-signal
+  if l:find("end_log:arigato4", 1, true) or l:find("recording finished", 1, true) then
+    -- Show a brief saving state
+    updateStatus("recording", "Stopping… Saving…")
+    task.delay(1.2, function()
+      updateStatus("idle", "Recording finished - saved to file")
+    end)
+    return
+  end
+
+  if l:find("saved:", 1, true) then
+    updateStatus("idle", s)  -- e.g., "Saved: Moon_Macros/…"
+    return
+  end
+
+  if l:find("recording", 1, true) then
+    updateStatus("recording", s)
+  elseif l:find("playing", 1, true) then
+    updateStatus("playing", s)
+  elseif #s > 0 then
+    updateStatus("idle", s)
+  else
+    updateStatus("idle", "Ready to record")
+  end
+end
+
+-- Bridge: map recorder action messages to UI list
+local function applyRecorderAction(msg)
+  if type(msg) == "string" and #msg > 0 then
+    addActionToList(msg, "log")
+    return
+  end
+
+  if type(msg) == "table" and msg.kind then
+    local txt = msg.kind
+    if msg.data and msg.data.unit then
+      txt = txt .. " | " .. tostring(msg.data.unit)
+      if msg.data.pk then
+        txt = txt .. " @" .. msg.data.pk
+      end
+    end
+    addActionToList(txt, tostring(msg.kind))
+  end
+end
+
+
+
+-- Add action to list
+local KINDS_COLORS = {
+  place = Color3.fromRGB(120, 200, 120),
+  upgrade = Color3.fromRGB(120, 160, 230),
+  sell = Color3.fromRGB(230, 120, 120),
+  wave_set = Color3.fromRGB(180, 140, 230),
+  StartVoteYes = Color3.fromRGB(255, 200, 120),
+  SkipVoteYes  = Color3.fromRGB(255, 200, 120),
+  end_log_detected = Color3.fromRGB(210, 210, 210),
+  ["auto_stop"] = Color3.fromRGB(210, 210, 210),
+  log = COLORS.text_primary
+}
+
+function addActionToList(actionText, kind)
+  local actionItem = Instance.new("TextLabel")
+  actionItem.Text = "→ " .. tostring(actionText or "")
+  actionItem.TextColor3 = KINDS_COLORS[kind] or COLORS.text_primary
+  actionItem.BackgroundTransparency = 1
+  actionItem.Font = Enum.Font.SourceSans
+  actionItem.TextSize = 12
+  actionItem.TextXAlignment = Enum.TextXAlignment.Left
+  actionItem.Size = UDim2.new(1, -10, 0, 20)
+  actionItem.Parent = actionsList
+
+  -- Ajusta el canvas al contenido real
+  actionsList.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
+
+  -- Auto-scroll al final para ver siempre la última acción
+  task.defer(function()
+    local y = math.max(0, actionsList.AbsoluteCanvasSize.Y - actionsList.AbsoluteSize.Y)
+    actionsList.CanvasPosition = Vector2.new(0, y)
+  end)
+end
+
+-- Register MacroAPI status callback (after functions are defined)
+pcall(function()
+  if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.onStatus then
+    getgenv().MacroAPI.onStatus(function(msg)
+      applyRecorderStatus(msg)
+    end)
+    -- Initialize with current status, if provided
+    if type(getgenv().MacroAPI.status) == "function" then
+      local st = getgenv().MacroAPI.status()
+      if type(st) == "table" and st.statusMsg then
+        applyRecorderStatus(st.statusMsg)
+      end
+    end
+  end
+end)
+
+-- Register MacroAPI action callback (after functions are defined)
+pcall(function()
+  if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.onAction then
+    getgenv().MacroAPI.onAction(function(msg)
+      applyRecorderAction(msg)
+    end)
+  end
+end)
+
+local function countRecordedRows()
+  local n = 0
+  for _, child in ipairs(actionsList:GetChildren()) do
+    if child:IsA("TextLabel") then n = n + 1 end
+  end
+  return n
+end
+
+recordBtn.MouseButton1Click:Connect(function()
+  -- Clear previous recordings in the UI list
+  for _, child in ipairs(actionsList:GetChildren()) do
+    if child:IsA("TextLabel") then child:Destroy() end
+  end
+  recordedActions = {}
+
+  -- Prefer the external recorder API if available
+  local usedAPI = false
+  pcall(function()
+    if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.start then
+      getgenv().MacroAPI.start()
+      usedAPI = true
+    end
+  end)
+
+  if not usedAPI then
+    -- Fallback: just switch UI state (no simulated actions)
+    if not isRecording and not isPlaying then
+      isRecording = true
+      updateStatus("recording", "Recording your actions...")
+    end
+  end
+end)
+
+stopBtn.MouseButton1Click:Connect(function()
+  local usedAPI = false
+  pcall(function()
+    if getgenv and getgenv().MacroAPI and getgenv().MacroAPI.stop then
+      getgenv().MacroAPI.stop()
+      usedAPI = true
+    end
+  end)
+
+  if not usedAPI then
+    if isRecording then
+      isRecording = false
+      updateStatus("idle", "Recording stopped - " .. tostring(countRecordedRows()) .. " actions")
+    elseif isPlaying then
+      isPlaying = false
+      updateStatus("idle", "Playback stopped")
+    end
+  end
+end)
+
+playBtn.MouseButton1Click:Connect(function()
+  if isRecording or isPlaying then return end
+
+  -- Intentar cargar y reproducir usando MacroAPI/MacroManager si existen
+  local usedAPI = false
+  pcall(function()
+    if getgenv and getgenv().MacroAPI then
+      -- Cargar el archivo seleccionado si la API lo soporta
+      if selectedMacroName and getgenv().MacroAPI.load then
+        getgenv().MacroAPI.load(selectedMacroName)
+      elseif selectedMacroName and getgenv().MacroManager and getgenv().MacroManager.select then
+        getgenv().MacroManager.select(selectedMacroName)
+      end
+      if getgenv().MacroAPI.play then
+        getgenv().MacroAPI.play()
+        usedAPI = true
+      elseif getgenv().MacroAPI.start then
+        -- Algunas implementaciones usan start() para iniciar playback
+        getgenv().MacroAPI.start()
+        usedAPI = true
+      end
+    end
+  end)
+
+  if usedAPI then
+    isPlaying = true
+    updateStatus("playing", selectedMacroName and ("Playing: " .. tostring(selectedMacroName)) or "Playing recorded actions...")
+    return
+  end
+
+  -- Fallback: simulación como antes
+  if #actionsList:GetChildren() > 0 then
+    isPlaying = true
+    updateStatus("playing", "Playing recorded actions...")
+    task.spawn(function()
+      wait(3)
+      isPlaying = false
+      updateStatus("idle", "Playback complete")
+    end)
+  end
+end)
+
+-- ===== FUNCIONES DE NAVEGACIÓN =====
+local function switchTab(tabName)
+  if currentTab == tabName then return end
+  
+  -- Animar tab anterior
+  local oldTab = tabs[currentTab]
+  if oldTab then
+    TweenService:Create(oldTab.button, TweenInfo.new(0.3), {BackgroundColor3 = COLORS.tab_inactive}):Play()
+    TweenService:Create(oldTab.icon, TweenInfo.new(0.3), {TextColor3 = COLORS.text_dim}):Play()
+    TweenService:Create(oldTab.label, TweenInfo.new(0.3), {TextColor3 = COLORS.text_primary}):Play()
+    oldTab.indicator.Visible = false
+  end
+  
+  -- Animar nueva tab
+  local newTab = tabs[tabName]
+  if newTab then
+    TweenService:Create(newTab.button, TweenInfo.new(0.3), {BackgroundColor3 = COLORS.tab_active}):Play()
+    TweenService:Create(newTab.icon, TweenInfo.new(0.3), {TextColor3 = COLORS.text_secondary}):Play()
+    TweenService:Create(newTab.label, TweenInfo.new(0.3), {TextColor3 = COLORS.text_secondary}):Play()
+    newTab.indicator.Visible = true
+  end
+  
+  -- Cambiar páginas
+  if pages[currentTab] then
+    pages[currentTab].Visible = false
+  end
+  if pages[tabName] then
+    pages[tabName].Visible = true
+  end
+  
+  -- Reset macro scroll position when opening the Macro System so it doesn't appear mid-way
+  if tabName == "Macro System" and macroContainer and macroContainer.CanvasPosition then
+    macroContainer.CanvasPosition = Vector2.new(0, 0)
+  end
+  
+  currentTab = tabName
+end
+
+-- Conectar eventos de tabs
+featuresTab.MouseButton1Click:Connect(function() switchTab("Features") end)
+macroTab.MouseButton1Click:Connect(function() switchTab("Macro System") end)
+
+-- Hover effects para tabs
+for name, tab in pairs(tabs) do
+  tab.button.MouseEnter:Connect(function()
+    if currentTab ~= name then
+      TweenService:Create(tab.button, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.button_hover}):Play()
+    end
+  end)
+  
+  tab.button.MouseLeave:Connect(function()
+    if currentTab ~= name then
+      TweenService:Create(tab.button, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.tab_inactive}):Play()
+    end
+  end)
+end
+
+-- ===== FUNCIONALIDAD DE ARRASTRE =====
+local function makeDraggable(frame, handle)
+  local dragStart, startPos = nil, nil
+  
+  handle.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+       input.UserInputType == Enum.UserInputType.Touch then
+      isDragging = true
+      dragStart = input.Position
+      startPos = frame.Position
+    end
+  end)
+  
+  UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+       input.UserInputType == Enum.UserInputType.Touch then
+      isDragging = false
+    end
+  end)
+  
+  UIS.InputChanged:Connect(function(input)
+    if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or 
+                       input.UserInputType == Enum.UserInputType.Touch) then
+      local delta = input.Position - dragStart
+      frame.Position = UDim2.new(
+        startPos.X.Scale,
+        startPos.X.Offset + delta.X,
+        startPos.Y.Scale,
+        startPos.Y.Offset + delta.Y
+      )
+    end
+  end)
+end
+
+makeDraggable(mainFrame, topBar)
+
+-- === Smooth intro when coming from loader ===
+local function playIntroIfFromLoader()
+  -- If we came from the loader, play a pop-in intro; otherwise just show the UI
+  if _G.MOONHUB_LOADER_SHOWN then
+    -- consume the flag so it only plays once
+    _G.MOONHUB_LOADER_SHOWN = nil
+
+    -- Create a short intro overlay + blur to avoid any 1-frame flash
+    local Lighting = game:GetService("Lighting")
+    local prevIgnoreInset = gui.IgnoreGuiInset
+    gui.IgnoreGuiInset = true
+
+    local prevIntro = Lighting:FindFirstChild("MoonHubIntroBlur")
+    if prevIntro then prevIntro:Destroy() end
+
+    local introBlur = Instance.new("BlurEffect")
+    introBlur.Name = "MoonHubIntroBlur"
+    introBlur.Size = 0
+    introBlur.Parent = Lighting
+
+    local dim = Instance.new("Frame")
+    dim.Name = "MoonHubIntroDim"
+    dim.BackgroundColor3 = Color3.new(0, 0, 0)
+    dim.BackgroundTransparency = 0.5
+    dim.BorderSizePixel = 0
+    dim.Size = UDim2.fromScale(1, 1)
+    dim.AnchorPoint = Vector2.new(0, 0)
+    dim.Position = UDim2.fromOffset(0, 0)
+    dim.ZIndex = 9998
+    dim.Parent = gui
+
+    local targetPos  = mainFrame.Position
+    local targetSize = mainFrame.Size
+    local origBg     = mainFrame.BackgroundTransparency or 0
+
+    -- Prepare hidden state BEFORE making it visible (avoids 1-frame flash)
+    mainFrame.BackgroundTransparency = 1
+    mainFrame.Position = UDim2.new(targetPos.X.Scale, targetPos.X.Offset, targetPos.Y.Scale, targetPos.Y.Offset + 18)
+    mainFrame.Size     = UDim2.new(targetSize.X.Scale, math.floor(targetSize.X.Offset * 0.92), targetSize.Y.Scale, math.floor(targetSize.Y.Offset * 0.92))
+
+    -- Now show it and wait one Heartbeat so Roblox renders the prepared state
+    mainFrame.Visible = true
+    RunService.Heartbeat:Wait()
+
+    -- Bring in overlay/blur very quickly
+    TweenService:Create(dim, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.65}):Play()
+    TweenService:Create(introBlur, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = 10}):Play()
+
+    -- Pop-in tween
+local popTween = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local pop1 = TweenService:Create(mainFrame, popTween, {
+  Position = targetPos,
+  Size = targetSize,
+  BackgroundTransparency = origBg
+})
+pop1:Play()
+pop1.Completed:Wait()
+
+-- Fade-out rápido de overlays y blur
+local dimFade  = TweenService:Create(dim,  TweenInfo.new(0.18, Enum.EasingStyle.Quad), { BackgroundTransparency = 1 })
+local blurFade = TweenService:Create(introBlur, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { Size = 0 })
+dimFade:Play()
+blurFade:Play()
+
+-- Limpieza final segura (y restaurar IgnoreGuiInset)
+task.delay(0.20, function()
+  pcall(function() gui.IgnoreGuiInset = prevIgnoreInset end)
+  pcall(function() if dim and dim.Parent then dim:Destroy() end end)
+  pcall(function() if introBlur and introBlur.Parent then introBlur:Destroy() end end)
+end)
+
+    -- Fade-in children with staggered delays
+    local tw = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local children = mainFrame:GetDescendants()
+    table.sort(children, function(a,b)
+      return (a.LayoutOrder or 0) < (b.LayoutOrder or 0)
+    end)
+    local delayBase, delayStep = 0, 0.02
+    for i, d in ipairs(children) do
+      local delay = delayBase + (i-1) * delayStep
+      if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+        d.TextTransparency = 1
+        task.delay(delay, function()
+          TweenService:Create(d, tw, { TextTransparency = 0 }):Play()
+        end)
+      elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+        d.ImageTransparency = 1
+        task.delay(delay, function()
+          TweenService:Create(d, tw, { ImageTransparency = 0 }):Play()
+        end)
+      elseif d:IsA("UIStroke") then
+        local targetT = d.Transparency or 0.5
+        d.Transparency = 1
+        task.delay(delay, function()
+          TweenService:Create(d, tw, { Transparency = targetT }):Play()
+        end)
+      end
+    end
+
+    -- Fade out overlay and blur, then cleanup and restore inset
+    local fadeOut = TweenService:Create(dim, TweenInfo.new(0.20, Enum.EasingStyle.Quad), {BackgroundTransparency = 1})
+    fadeOut:Play()
+    TweenService:Create(introBlur, TweenInfo.new(0.22, Enum.EasingStyle.Quad), {Size = 0}):Play()
+
+    task.delay(0.22, function()
+      pcall(function() if dim then dim:Destroy() end end)
+      pcall(function() if introBlur and introBlur.Parent then introBlur:Destroy() end end)
+      gui.IgnoreGuiInset = prevIgnoreInset
+    end)
+  else
+
+    local Lighting = game:GetService("Lighting")
+local leftover = Lighting:FindFirstChild("MoonHubIntroBlur")
+if leftover then leftover:Destroy() end
+
+    -- No loader shown (manual run): simply reveal the UI immediately
+    mainFrame.Visible = true
+  end
+end
+
+-- run after the UI is fully constructed
+task.spawn(playIntroIfFromLoader)
+
+local function toNumberSafe(v)
+  if v == nil then return nil end
+  if type(v) == "number" then return v end
+  if type(v) == "string" then
+    local digits = v:gsub("%D", "")
+    return tonumber(digits)
+  end
+  return nil
+end
+
+-- ===== ACTUALIZACIÓN DE VALORES =====
+local function updateValues(gems, gold, tb)
+  local g = toNumberSafe(gems)
+  local c = toNumberSafe(gold)
+  local t = toNumberSafe(tb)
+
+  if g ~= nil then
+    if lastGems and g ~= lastGems then
+      flashLabel(gemsValue, g > lastGems)
+    end
+    gemsValue.Text = formatNumber(g)
+    lastGems = g
+  end
+
+  if c ~= nil then
+    if lastCash and c ~= lastCash then
+      flashLabel(goldValue, c > lastCash)
+    end
+    goldValue.Text = formatNumber(c)
+    lastCash = c
+  end
+
+  if t ~= nil then
+    if lastTB and t ~= lastTB then
+      flashLabel(tbValue, t > lastTB)
+    end
+    tbValue.Text = formatNumber(t)
+    lastTB = t
+  end
+end
+
+-- ===== LECTURA DE VALORES DEL JUEGO =====
+local function extractNumber(text)
+  if type(text) == "number" then return text end
+  if type(text) == "string" then
+    local digits = text:gsub("%D", "")
+    return tonumber(digits)
+  end
+  return nil
+end
+
+-- Buscar y conectar al RemoteEvent
+task.spawn(function()
+  local remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+  if not remotes then return end
+  
+  local updateEvent = remotes:WaitForChild("UpdateEvent", 5)
+  if updateEvent and updateEvent:IsA("RemoteEvent") then
+    updateEvent.OnClientEvent:Connect(function(data)
+      if type(data) == "table" then
+        updateValues(toNumberSafe(data.Premium) or toNumberSafe(data.Gems), toNumberSafe(data.Cash), nil)
+        
+        local tb = data["Trait Burner"] or data.TraitBurner or data.TB
+        if tb then
+          updateValues(nil, nil, extractNumber(tb))
+        end
+      end
+    end)
+  end
+end)
+
+-- Leer del HUD existente
+task.spawn(function()
+  wait(1)
+  local mainUI = player.PlayerGui:FindFirstChild("MainUI", true)
+  if not mainUI then return end
+  
+  local function findPath(...)
+    local current = mainUI
+    for _, name in ipairs({...}) do
+      current = current:FindFirstChild(name)
+      if not current then return nil end
+    end
+    return current
+  end
+  
+  local premiumLabel = findPath("MenuFrame", "BottomFrame", "BottomExpand", "CashFrame", "Premium", "ExpandFrame", "TextLabel")
+  local cashLabel = findPath("MenuFrame", "BottomFrame", "BottomExpand", "CashFrame", "Cash", "ExpandFrame", "TextLabel")
+  
+  if premiumLabel then
+    local function updateGems()
+      updateValues(extractNumber(premiumLabel.Text), nil, nil)
+    end
+    updateGems()
+    premiumLabel:GetPropertyChangedSignal("Text"):Connect(updateGems)
+  end
+  
+  if cashLabel then
+    local function updateGold()
+      updateValues(nil, extractNumber(cashLabel.Text), nil)
+    end
+    updateGold()
+    cashLabel:GetPropertyChangedSignal("Text"):Connect(updateGold)
+  end
+end)
+
+
+-- ===== BOTÓN CERRAR =====
+closeButton.MouseButton1Click:Connect(function()
+  gui:Destroy()
+end)
+
+pcall(function() _killBlur("MoonHubIntroBlur") end)
