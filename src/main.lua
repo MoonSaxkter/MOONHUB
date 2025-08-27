@@ -6,7 +6,9 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContentProvider = game:GetService("ContentProvider")
 local UIS = game:GetService("UserInputService")
+
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
 
 -- Minimal helpers for the loader (avoid forward-reference to UI utils below)
@@ -34,6 +36,17 @@ local function getUILayer()
     return player:WaitForChild("PlayerGui")
 end
 
+-- Nunca dejar blur pegado
+local function _killBlur(name)
+  local Lighting = game:GetService("Lighting")
+  local b = Lighting:FindFirstChild(name)
+  if b then b:Destroy() end
+end
+
+-- Borra restos de ejecuciones previas
+_killBlur("MoonHubLoaderBlur")
+_killBlur("MoonHubIntroBlur")
+
 -- allow disabling the loader from autoexec if desired
 if not _G.MOONHUB_NO_LOADER then
   local loaderGui = Instance.new("ScreenGui")
@@ -44,11 +57,26 @@ if not _G.MOONHUB_NO_LOADER then
   loaderGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
   loaderGui.Parent = getUILayer()
 
+  -- Background blur + dim overlay (glass feel)
+  local Lighting = game:GetService("Lighting")
+  local blur = Instance.new("BlurEffect")
+  blur.Name = "MoonHubLoaderBlur"
+  blur.Size = 6
+  blur.Parent = Lighting
+
+  local overlay = Instance.new("Frame")
+  overlay.Name = "DimOverlay"
+  overlay.BackgroundColor3 = Color3.fromRGB(0,0,0)
+  overlay.BackgroundTransparency = 0.25
+  overlay.BorderSizePixel = 0
+  overlay.Size = UDim2.new(1,0,1,0)
+  overlay.Parent = loaderGui
+
   -- Loader card
   local card = Instance.new("Frame")
   card.Name = "LoaderCard"
   card.Size = UDim2.new(0, 420, 0, 120)
-  card.Position = UDim2.new(0.5, 0, 0.82, 0)
+  card.Position = UDim2.new(0.5, 0, 0.5, 0)
   card.AnchorPoint = Vector2.new(0.5, 0.5)
   card.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
   card.BackgroundTransparency = 0.1
@@ -56,16 +84,80 @@ if not _G.MOONHUB_NO_LOADER then
   _corner(card, 12)
   _stroke(card, Color3.fromRGB(70, 70, 85), 1, 0.5)
 
-  local title = Instance.new("TextLabel")
-  title.Name = "Title"
-  title.Text = "MOONHUB"
-  title.Font = Enum.Font.SourceSansBold
-  title.TextSize = 28
-  title.TextColor3 = Color3.fromRGB(255,255,255)
-  title.BackgroundTransparency = 1
-  title.Size = UDim2.new(1, -20, 0, 34)
-  title.Position = UDim2.new(0, 10, 0, 8)
-  title.Parent = card
+  -- subtle glass gradient and appear animation
+  local cardGrad = Instance.new("UIGradient")
+  cardGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255,255,255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(220,220,230))
+  })
+  cardGrad.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.96),
+    NumberSequenceKeypoint.new(1, 0.98)
+  })
+  cardGrad.Rotation = 90
+  cardGrad.Parent = card
+
+  card.Size = UDim2.new(0, 400, 0, 112)
+  card.BackgroundTransparency = 0.08
+  card.Position = UDim2.new(0.5, 0, 0.5, 0)
+  card.AnchorPoint = Vector2.new(0.5, 0.5)
+  card.Visible = true
+  card.ClipsDescendants = true
+
+  card.Size = UDim2.new(0, 360, 0, 118)
+  local appear = TweenService:Create(card, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = UDim2.new(0, 420, 0, 136)})
+  appear:Play()
+
+  -- Brand image centered (replaces text title)
+  local logoImg = Instance.new("ImageLabel")
+  logoImg.Name = "Brand"
+  logoImg.BackgroundTransparency = 1
+  logoImg.Image = "rbxassetid://102518679256494"
+  logoImg.ScaleType = Enum.ScaleType.Fit
+  logoImg.Size = UDim2.new(0, 220, 0, 42)
+  -- horizontal nudge +40 to align over "Loading..."
+  logoImg.Position = UDim2.new(0.5, 40, 0, 8)
+  logoImg.AnchorPoint = Vector2.new(0.5, 0)
+  logoImg.ClipsDescendants = true
+  logoImg.ZIndex = 10
+  logoImg.Parent = card
+
+  -- Soft glow behind the logo (subtle and under the main image)
+  local logoGlow = Instance.new("ImageLabel")
+  logoGlow.Name = "BrandGlow"
+  logoGlow.BackgroundTransparency = 1
+  logoGlow.Image = "rbxassetid://102518679256494"
+  logoGlow.ScaleType = Enum.ScaleType.Fit
+  logoGlow.ImageColor3 = Color3.fromRGB(170, 130, 255)
+  logoGlow.ImageTransparency = 0.72
+  logoGlow.Size = UDim2.new(0, 240, 0, 48)
+  logoGlow.Position = logoImg.Position
+  logoGlow.AnchorPoint = logoImg.AnchorPoint
+  logoGlow.ZIndex = 9
+  logoGlow.Parent = card
+
+  -- Keep glow locked under the logo if the logo moves
+  logoImg:GetPropertyChangedSignal("Position"):Connect(function()
+    logoGlow.Position = logoImg.Position
+  end)
+  logoImg:GetPropertyChangedSignal("Size"):Connect(function()
+    logoGlow.Size = UDim2.new(0, math.floor(logoImg.Size.X.Offset * 1.09), 0, math.floor(logoImg.Size.Y.Offset * 1.14))
+  end)
+
+  -- Gentle bob animation (tiny vertical float)
+  task.spawn(function()
+    local upPos = UDim2.new(0.5, 40, 0, 4)
+    local dnPos = UDim2.new(0.5, 40, 0, 12)
+    while logoImg.Parent do
+      TweenService:Create(logoImg, TweenInfo.new(1.15, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Position = upPos}):Play()
+      TweenService:Create(logoGlow, TweenInfo.new(1.15, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Position = upPos}):Play()
+      task.wait(1.15)
+      TweenService:Create(logoImg, TweenInfo.new(1.15, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Position = dnPos}):Play()
+      TweenService:Create(logoGlow, TweenInfo.new(1.15, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {Position = dnPos}):Play()
+      task.wait(1.15)
+    end
+  end)
+
 
   local subtitle = Instance.new("TextLabel")
   subtitle.Name = "Subtitle"
@@ -75,14 +167,42 @@ if not _G.MOONHUB_NO_LOADER then
   subtitle.TextColor3 = Color3.fromRGB(200,200,210)
   subtitle.BackgroundTransparency = 1
   subtitle.Size = UDim2.new(1, -20, 0, 20)
-  subtitle.Position = UDim2.new(0, 10, 0, 44)
+  subtitle.Position = UDim2.new(0, 10, 0, 56)
   subtitle.Parent = card
+
+  -- Rotating tips label
+  local tip = Instance.new("TextLabel")
+  tip.Name = "Tip"
+  tip.Text = "Tip: Use lowercase names for macros"
+  tip.Font = Enum.Font.SourceSans
+  tip.TextSize = 13
+  tip.TextColor3 = Color3.fromRGB(190,190,200)
+  tip.BackgroundTransparency = 1
+  tip.Size = UDim2.new(1, -20, 0, 18)
+  tip.Position = UDim2.new(0, 10, 0, 76)
+  tip.TextXAlignment = Enum.TextXAlignment.Left
+  tip.Parent = card
+
+  local tips = {
+    "Tip: Name macros in lowercase.",
+    "Tip: Use _general for common challenges.",
+    "Tip: _single_placement for Single Placement.",
+    "Tip: _high_cost for High Cost.",
+    "Tip: Auto Select picks the best macro."}
+  task.spawn(function()
+    local i = 1
+    while card.Parent do
+      tip.Text = tips[i]
+      i = (i % #tips) + 1
+      task.wait(2.4)
+    end
+  end)
 
   -- Progress bar background
   local barBg = Instance.new("Frame")
   barBg.Name = "BarBg"
   barBg.Size = UDim2.new(1, -20, 0, 12)
-  barBg.Position = UDim2.new(0, 10, 0, 80)
+  barBg.Position = UDim2.new(0, 10, 0, 98)
   barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
   barBg.Parent = card
   _corner(barBg, 6)
@@ -95,6 +215,23 @@ if not _G.MOONHUB_NO_LOADER then
   barFill.Parent = barBg
   _corner(barFill, 6)
 
+  -- Shimmer effect for the progress fill
+  local fillGrad = Instance.new("UIGradient")
+  fillGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(170,130,255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200,170,255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(140,90,245))
+  })
+  fillGrad.Rotation = 0
+  fillGrad.Parent = barFill
+
+  task.spawn(function()
+    while barFill.Parent do
+      fillGrad.Offset = Vector2.new((tick() * 0.4) % 1, 0)
+      task.wait(0.03)
+    end
+  end)
+
   -- Percentage label
   local pct = Instance.new("TextLabel")
   pct.Name = "Percent"
@@ -104,7 +241,7 @@ if not _G.MOONHUB_NO_LOADER then
   pct.TextColor3 = Color3.fromRGB(220,220,230)
   pct.BackgroundTransparency = 1
   pct.Size = UDim2.new(1, 0, 0, 16)
-  pct.Position = UDim2.new(0, 0, 0, 96)
+  pct.Position = UDim2.new(0, 0, 0, 116)
   pct.Parent = card
 
   local function setProgress(n)
@@ -177,7 +314,7 @@ if not _G.MOONHUB_NO_LOADER then
       task.wait(0.15)
   end
 
-  -- 2) Fase final: animación suave hasta 100%
+  -- 2) Final phase: smooth to 100% + success feedback
   subtitle.Text = "Ready"
   local start = progress
   local t = 0
@@ -188,7 +325,28 @@ if not _G.MOONHUB_NO_LOADER then
       setProgress(val)
   end
 
-  task.wait(0.12)
+  -- quick success check mark
+  local check = Instance.new("TextLabel")
+  check.BackgroundTransparency = 1
+  check.Text = "✅"
+  check.Font = Enum.Font.SourceSansBold
+  check.TextSize = 20
+  check.TextColor3 = Color3.fromRGB(220,220,230)
+  check.Size = UDim2.new(0, 24, 0, 24)
+  check.Position = UDim2.new(1, -34, 0, 8)
+  check.Parent = card
+
+  -- fade and scale out the card, then cleanup overlay/blur
+  task.wait(0.15)
+  local fade = TweenService:Create(card, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundTransparency = 0.22})
+  local shrink = TweenService:Create(card, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {Size = UDim2.new(0, 380, 0, 124)})
+  fade:Play(); shrink:Play()
+  task.wait(0.2)
+
+  if overlay then overlay:Destroy() end
+  if blur and blur.Parent then blur:Destroy() end
+  _G.MOONHUB_LOADER_SHOWN = true
+  _killBlur("MoonHubLoaderBlur") -- por si el loader no limpió por timing
   loaderGui:Destroy()
 end
 -- ===== END LOADER FIX =====
@@ -288,6 +446,7 @@ mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.Parent = gui
 createCorner(mainFrame, 16)
 createStroke(mainFrame, COLORS.border, 1, 0.7)
+mainFrame.Visible = false
 
 -- Barra Superior
 local topBar = Instance.new("Frame")
@@ -2073,6 +2232,129 @@ end
 
 makeDraggable(mainFrame, topBar)
 
+-- === Smooth intro when coming from loader ===
+local function playIntroIfFromLoader()
+  -- If we came from the loader, play a pop-in intro; otherwise just show the UI
+  if _G.MOONHUB_LOADER_SHOWN then
+    -- consume the flag so it only plays once
+    _G.MOONHUB_LOADER_SHOWN = nil
+
+    -- Create a short intro overlay + blur to avoid any 1-frame flash
+    local Lighting = game:GetService("Lighting")
+    local prevIgnoreInset = gui.IgnoreGuiInset
+    gui.IgnoreGuiInset = true
+
+    local prevIntro = Lighting:FindFirstChild("MoonHubIntroBlur")
+    if prevIntro then prevIntro:Destroy() end
+
+    local introBlur = Instance.new("BlurEffect")
+    introBlur.Name = "MoonHubIntroBlur"
+    introBlur.Size = 0
+    introBlur.Parent = Lighting
+
+    local dim = Instance.new("Frame")
+    dim.Name = "MoonHubIntroDim"
+    dim.BackgroundColor3 = Color3.new(0, 0, 0)
+    dim.BackgroundTransparency = 0.5
+    dim.BorderSizePixel = 0
+    dim.Size = UDim2.fromScale(1, 1)
+    dim.AnchorPoint = Vector2.new(0, 0)
+    dim.Position = UDim2.fromOffset(0, 0)
+    dim.ZIndex = 9998
+    dim.Parent = gui
+
+    local targetPos  = mainFrame.Position
+    local targetSize = mainFrame.Size
+    local origBg     = mainFrame.BackgroundTransparency or 0
+
+    -- Prepare hidden state BEFORE making it visible (avoids 1-frame flash)
+    mainFrame.BackgroundTransparency = 1
+    mainFrame.Position = UDim2.new(targetPos.X.Scale, targetPos.X.Offset, targetPos.Y.Scale, targetPos.Y.Offset + 18)
+    mainFrame.Size     = UDim2.new(targetSize.X.Scale, math.floor(targetSize.X.Offset * 0.92), targetSize.Y.Scale, math.floor(targetSize.Y.Offset * 0.92))
+
+    -- Now show it and wait one Heartbeat so Roblox renders the prepared state
+    mainFrame.Visible = true
+    RunService.Heartbeat:Wait()
+
+    -- Bring in overlay/blur very quickly
+    TweenService:Create(dim, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0.65}):Play()
+    TweenService:Create(introBlur, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Size = 10}):Play()
+
+    -- Pop-in tween
+local popTween = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local pop1 = TweenService:Create(mainFrame, popTween, {
+  Position = targetPos,
+  Size = targetSize,
+  BackgroundTransparency = origBg
+})
+pop1:Play()
+pop1.Completed:Wait()
+
+-- Fade-out rápido de overlays y blur
+local dimFade  = TweenService:Create(dim,  TweenInfo.new(0.18, Enum.EasingStyle.Quad), { BackgroundTransparency = 1 })
+local blurFade = TweenService:Create(introBlur, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { Size = 0 })
+dimFade:Play()
+blurFade:Play()
+
+-- Limpieza final segura (y restaurar IgnoreGuiInset)
+task.delay(0.20, function()
+  pcall(function() gui.IgnoreGuiInset = prevIgnoreInset end)
+  pcall(function() if dim and dim.Parent then dim:Destroy() end end)
+  pcall(function() if introBlur and introBlur.Parent then introBlur:Destroy() end end)
+end)
+
+    -- Fade-in children with staggered delays
+    local tw = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local children = mainFrame:GetDescendants()
+    table.sort(children, function(a,b)
+      return (a.LayoutOrder or 0) < (b.LayoutOrder or 0)
+    end)
+    local delayBase, delayStep = 0, 0.02
+    for i, d in ipairs(children) do
+      local delay = delayBase + (i-1) * delayStep
+      if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+        d.TextTransparency = 1
+        task.delay(delay, function()
+          TweenService:Create(d, tw, { TextTransparency = 0 }):Play()
+        end)
+      elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+        d.ImageTransparency = 1
+        task.delay(delay, function()
+          TweenService:Create(d, tw, { ImageTransparency = 0 }):Play()
+        end)
+      elseif d:IsA("UIStroke") then
+        local targetT = d.Transparency or 0.5
+        d.Transparency = 1
+        task.delay(delay, function()
+          TweenService:Create(d, tw, { Transparency = targetT }):Play()
+        end)
+      end
+    end
+
+    -- Fade out overlay and blur, then cleanup and restore inset
+    local fadeOut = TweenService:Create(dim, TweenInfo.new(0.20, Enum.EasingStyle.Quad), {BackgroundTransparency = 1})
+    fadeOut:Play()
+    TweenService:Create(introBlur, TweenInfo.new(0.22, Enum.EasingStyle.Quad), {Size = 0}):Play()
+
+    task.delay(0.22, function()
+      pcall(function() if dim then dim:Destroy() end end)
+      pcall(function() if introBlur and introBlur.Parent then introBlur:Destroy() end end)
+      gui.IgnoreGuiInset = prevIgnoreInset
+    end)
+  else
+
+    local Lighting = game:GetService("Lighting")
+local leftover = Lighting:FindFirstChild("MoonHubIntroBlur")
+if leftover then leftover:Destroy() end
+
+    -- No loader shown (manual run): simply reveal the UI immediately
+    mainFrame.Visible = true
+  end
+end
+
+-- run after the UI is fully constructed
+task.spawn(playIntroIfFromLoader)
+
 local function toNumberSafe(v)
   if v == nil then return nil end
   if type(v) == "number" then return v end
@@ -2184,3 +2466,5 @@ end)
 closeButton.MouseButton1Click:Connect(function()
   gui:Destroy()
 end)
+
+pcall(function() _killBlur("MoonHubIntroBlur") end)
