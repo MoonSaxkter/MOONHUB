@@ -440,7 +440,7 @@ gui.Parent = player.PlayerGui
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.BackgroundColor3 = COLORS.background_primary
-mainFrame.Size = UDim2.new(0, 600, 0, 560)
+mainFrame.Size = UDim2.new(0, 600, 0, 680)
 mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.Parent = gui
@@ -728,7 +728,6 @@ createCorner(toggleKnob, 11)
 
 -- No toggle state label for cleaner aesthetics
 
--- Description
 local tbDescription = Instance.new("TextLabel")
 tbDescription.Text = "With this function active you can search for Trait Burners in challenge, efficient for light farming. If you want to search for trait burners every time you return to the lobby, keep it active."
 tbDescription.TextColor3 = COLORS.text_dim
@@ -741,6 +740,292 @@ tbDescription.TextXAlignment = Enum.TextXAlignment.Left
 tbDescription.TextYAlignment = Enum.TextYAlignment.Top
 tbDescription.TextWrapped = true
 tbDescription.Parent = findTBButton
+
+-- === Filter by challenge section ===
+local filterSection = Instance.new("Frame")
+filterSection.Name = "FilterSection"
+filterSection.BackgroundTransparency = 1
+filterSection.Size = UDim2.new(1, 0, 0, 70)
+filterSection.Position = UDim2.new(0, 0, 0, 185)
+filterSection.Parent = featuresPage
+
+local filterTitle = Instance.new("TextLabel")
+filterTitle.Text = "Filter by challenge"
+filterTitle.TextColor3 = COLORS.text_secondary
+filterTitle.BackgroundTransparency = 1
+filterTitle.Font = Enum.Font.SourceSansSemibold
+filterTitle.TextSize = 16
+filterTitle.Size = UDim2.new(1, -20, 0, 22)
+filterTitle.Position = UDim2.new(0, 10, 0, 0)
+filterTitle.TextXAlignment = Enum.TextXAlignment.Left
+filterTitle.Parent = filterSection
+
+local filterDesc = Instance.new("TextLabel")
+filterDesc.Text = "Here you can filter maps and challenges. If you want a map to be ignored, leave its challenge list empty."
+filterDesc.TextColor3 = COLORS.text_dim
+filterDesc.BackgroundTransparency = 1
+filterDesc.Font = Enum.Font.SourceSans
+filterDesc.TextSize = 13
+filterDesc.Size = UDim2.new(1, -20, 0, 40)
+filterDesc.Position = UDim2.new(0, 10, 0, 26)
+filterDesc.TextXAlignment = Enum.TextXAlignment.Left
+filterDesc.TextYAlignment = Enum.TextYAlignment.Top
+filterDesc.TextWrapped = true
+
+filterDesc.Parent = filterSection
+
+-- === Filter map list with multi-select challenge dropdowns ===
+local FILTER = getgenv and getgenv().MoonFilter
+
+-- Maps available for Challenges UI
+local MAPS = {
+  { key = "innovation_island",     label = "Innovation Island" },
+  { key = "giant_island",          label = "Giant Island" },
+  { key = "future_city_ruins",     label = "Future City (Ruins)" },
+  { key = "city_of_voldstandig",   label = "City of Voldstandig" },
+  { key = "hidden_storm_village",  label = "Hidden Storm Village" },
+  { key = "city_of_york",          label = "City of York" },
+  { key = "shadow_tournament",     label = "Shadow Tournament" },
+}
+
+-- Challenge options (Random Units intentionally excluded)
+local CHALLENGE_OPTS = {
+  { label = "Flying Enemies",     key = "flying_enemies" },
+  { label = "Juggernaut Enemies", key = "juggernaut_enemies" },
+  { label = "Single Placement",    key = "single_placement" },
+  { label = "High Cost",           key = "high_cost" },
+}
+
+-- Persist UI selection in memory and forward to Filter module if present
+local FilterSelections = {}
+
+local function syncFilter(mapKey)
+  -- Convert set -> array
+  local list = {}
+  if FilterSelections[mapKey] then
+    for k, v in pairs(FilterSelections[mapKey]) do
+      if v then table.insert(list, k) end
+    end
+  end
+  -- Push to filter module if available
+  pcall(function()
+    if FILTER and type(FILTER.set) == "function" then
+      FILTER.set(mapKey, list)
+    elseif FILTER and type(FILTER.setMap) == "function" then
+      FILTER.setMap(mapKey, list)
+    elseif FILTER and type(FILTER.replaceOne) == "function" then
+      FILTER.replaceOne(mapKey, list)
+    end
+  end)
+end
+
+-- Pretty summary for the button text
+local function summarizeSelection(set)
+  local n = 0
+  for _,v in pairs(set or {}) do if v then n = n + 1 end end
+  if n == 0 then return "(none)" end
+  if n == #CHALLENGE_OPTS then return "All" end
+  return tostring(n) .. " selected"
+end
+
+-- Container for all map entries (scrollable)
+local filterList = Instance.new("ScrollingFrame")
+filterList.Name = "FilterList"
+filterList.BackgroundColor3 = COLORS.background_tertiary
+-- filterList.Size = UDim2.new(1, 0, 0, 380) -- replaced by dynamic sizing below
+filterList.Position = UDim2.new(0, 0, 0, filterSection.Position.Y.Offset + filterSection.Size.Y.Offset + 10)
+filterList.Parent = featuresPage
+filterList.ScrollBarThickness = 5
+filterList.ScrollBarImageColor3 = COLORS.accent
+filterList.BorderSizePixel = 0
+createCorner(filterList, 10)
+createStroke(filterList, COLORS.border, 1, 0.6)
+
+-- dynamic height based on available space
+local function recomputeFilterHeight()
+  local top = filterSection.Position.Y.Offset + filterSection.Size.Y.Offset + 10
+  local avail = math.max(150, featuresPage.AbsoluteSize.Y - top - 10)
+  filterList.Position = UDim2.new(0, 0, 0, top)
+  filterList.Size     = UDim2.new(1, 0, 0, avail)
+end
+
+recomputeFilterHeight()
+featuresPage:GetPropertyChangedSignal("AbsoluteSize"):Connect(recomputeFilterHeight)
+
+local listPad = Instance.new("UIPadding")
+listPad.PaddingTop = UDim.new(0, 10)
+listPad.PaddingLeft = UDim.new(0, 10)
+listPad.PaddingRight = UDim.new(0, 10)
+listPad.Parent = filterList
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 10)
+listLayout.Parent = filterList
+
+local function updateFilterCanvas()
+  filterList.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 20)
+end
+listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateFilterCanvas)
+
+-- UI factory for one map row (bold name + multiselect dropdown)
+local function createMapFilter(map)
+  local row = Instance.new("Frame")
+  row.Name = "Row_" .. map.key
+  row.BackgroundTransparency = 1
+  row.Size = UDim2.new(1, 0, 0, 72)
+  row.Parent = filterList
+
+  -- Map title (bold)
+  local title = Instance.new("TextLabel")
+  title.BackgroundTransparency = 1
+  title.Text = map.label
+  title.Font = Enum.Font.SourceSansBold
+  title.TextSize = 16
+  title.TextColor3 = COLORS.text_secondary
+  title.TextXAlignment = Enum.TextXAlignment.Left
+  title.Size = UDim2.new(1, 0, 0, 22)
+  title.Parent = row
+
+  -- Dropdown shell
+  local dd = Instance.new("Frame")
+  dd.Name = "Dropdown"
+  dd.BackgroundColor3 = COLORS.background_secondary
+  dd.Size = UDim2.new(1, 0, 0, 42)
+  dd.Position = UDim2.new(0, 0, 0, 28)
+  dd.Parent = row
+  createCorner(dd, 8)
+  createStroke(dd, COLORS.border, 1, 0.6)
+
+  local btn = Instance.new("TextButton")
+  btn.Text = "Choose challenges ▾"
+  btn.AutoButtonColor = false
+  btn.BackgroundTransparency = 1
+  btn.TextColor3 = Color3.new(1,1,1)
+  btn.Font = Enum.Font.SourceSansSemibold
+  btn.TextSize = 14
+  btn.Size = UDim2.new(1, -10, 1, 0)
+  btn.Position = UDim2.new(0, 10, 0, 0)
+  btn.TextXAlignment = Enum.TextXAlignment.Left
+  btn.Parent = dd
+
+  -- The popup list
+  local popup = Instance.new("Frame")
+  popup.Name = "Popup"
+  popup.BackgroundColor3 = COLORS.background_secondary
+  popup.Visible = false
+  popup.Parent = row
+  popup.ZIndex = 100
+  popup.Size = UDim2.new(1, 0, 0, 130)
+  popup.Position = UDim2.new(0, 0, 0, 74)
+  createCorner(popup, 8)
+  createStroke(popup, COLORS.border, 1, 0.6)
+
+  local popPad = Instance.new("UIPadding")
+  popPad.PaddingTop = UDim.new(0, 6)
+  popPad.PaddingLeft = UDim.new(0, 8)
+  popPad.Parent = popup
+
+  local popList = Instance.new("UIListLayout")
+  popList.SortOrder = Enum.SortOrder.LayoutOrder
+  popList.Padding = UDim.new(0, 6)
+  popList.Parent = popup
+
+  -- Initialize selection set from module (if any)
+  FilterSelections[map.key] = FilterSelections[map.key] or {}
+  pcall(function()
+    if FILTER and type(FILTER.get) == "function" then
+      local arr = FILTER.get(map.key) or {}
+      for _,k in ipairs(arr) do FilterSelections[map.key][k] = true end
+    elseif FILTER and type(FILTER.getMap) == "function" then
+      local arr = FILTER.getMap(map.key) or {}
+      for _,k in ipairs(arr) do FilterSelections[map.key][k] = true end
+    end
+  end)
+
+  -- Build check rows
+  local function addOption(opt)
+    local row = Instance.new("TextButton")
+    row.AutoButtonColor = false
+    row.BackgroundColor3 = COLORS.background_tertiary
+    row.Text = ""
+    row.Size = UDim2.new(1, -16, 0, 26)
+    row.Parent = popup
+    createCorner(row, 6)
+
+    local box = Instance.new("Frame")
+    box.Size = UDim2.new(0, 18, 0, 18)
+    box.Position = UDim2.new(0, 6, 0.5, 0)
+    box.AnchorPoint = Vector2.new(0, 0.5)
+    box.BackgroundColor3 = COLORS.background_secondary
+    box.Parent = row
+    createCorner(box, 4)
+    createStroke(box, COLORS.border, 1, 0.5)
+
+    local tick = Instance.new("TextLabel")
+    tick.BackgroundTransparency = 1
+    tick.Size = UDim2.new(0, 18, 0, 18)
+    tick.Position = UDim2.new(0, 0, 0, 0)
+    tick.Text = ""
+    tick.TextColor3 = COLORS.text_secondary
+    tick.Font = Enum.Font.SourceSansBold
+    tick.TextSize = 18
+    tick.Parent = box
+
+    local lab = Instance.new("TextLabel")
+    lab.BackgroundTransparency = 1
+    lab.Text = opt.label
+    lab.Font = Enum.Font.SourceSans
+    lab.TextSize = 14
+    lab.TextColor3 = COLORS.text_primary
+    lab.TextXAlignment = Enum.TextXAlignment.Left
+    lab.Size = UDim2.new(1, -34, 1, 0)
+    lab.Position = UDim2.new(0, 34, 0, 0)
+    lab.Parent = row
+
+    local function refresh()
+      local on = FilterSelections[map.key][opt.key] == true
+      box.BackgroundColor3 = on and COLORS.accent or COLORS.background_secondary
+      tick.Text = on and "✓" or ""
+    end
+
+    row.MouseButton1Click:Connect(function()
+      local cur = FilterSelections[map.key][opt.key]
+      FilterSelections[map.key][opt.key] = not cur and true or nil
+      btn.Text = summarizeSelection(FilterSelections[map.key]) .. " ▾"
+      refresh()
+      syncFilter(map.key)
+    end)
+
+    -- hover
+    row.MouseEnter:Connect(function()
+      TweenService:Create(row, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
+    end)
+    row.MouseLeave:Connect(function()
+      TweenService:Create(row, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.background_tertiary}):Play()
+    end)
+
+    refresh()
+  end
+
+  for _,opt in ipairs(CHALLENGE_OPTS) do
+    addOption(opt)
+  end
+
+  -- Button to open/close popup
+  btn.MouseButton1Click:Connect(function()
+    popup.Visible = not popup.Visible
+  end)
+
+  -- Initialize button summary text
+  btn.Text = summarizeSelection(FilterSelections[map.key]) .. " ▾"
+end
+
+for _,m in ipairs(MAPS) do
+  createMapFilter(m)
+end
+
+updateFilterCanvas()
 
 -- Toggle State Variable
 local isTBActive = false
@@ -835,7 +1120,7 @@ macroDesc.Parent = macroPage
 local macroContainer = Instance.new("ScrollingFrame")
 macroContainer.Name = "MacroContainer"
 macroContainer.BackgroundColor3 = COLORS.background_tertiary
-macroContainer.Size = UDim2.new(1, 0, 0, 400)
+macroContainer.Size = UDim2.new(1, 0, 1, -90) -- fill page height (header ~80 + padding ~10)
 macroContainer.Position = UDim2.new(0, 0, 0, 80)
 macroContainer.Parent = macroPage
 macroContainer.AutomaticCanvasSize = Enum.AutomaticSize.None

@@ -12,6 +12,16 @@ local LP       = Players.LocalPlayer
 local PG       = LP:WaitForChild("PlayerGui")
 local RF       = Rep:WaitForChild("Remotes"):WaitForChild("GetFunction")
 
+-- ===== Filter (optional; UI may configure allowed maps/challenges) =====
+local Filter = (getgenv and getgenv().MoonFilter)
+            or (function()
+                  local ok, mod = pcall(function()
+                    return loadstring(game:HttpGet("https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/filter.lua"))()
+                  end)
+                  if ok then return mod end
+                  return nil
+                end)()
+
 -- ===== Config =====
 local UI_TIMEOUT_SEC   = 20
 local RETRIES_PRESS    = 3
@@ -276,16 +286,53 @@ local CHALLENGE_KEYWORDS = {
     "double hp","more hp"
 }
 
-local function getChallengeTypeHint()
-    local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
-    if not rr then return "" end
-    for _,n in ipairs(rr:GetDescendants()) do
-        if n:IsA("TextLabel") and n.Text and #n.Text>0 then
-            local tx = n.Text:lower()
-            for _,kw in ipairs(CHALLENGE_KEYWORDS) do
-                if tx:find(kw,1,true) then return kw end
+-- Detect current map name by scanning the RightFrame texts against the known map list
+local function detectCurrentMapName()
+    local maps = {}
+    if Filter and Filter.listMaps then
+        maps = Filter.listMaps()
+    else
+        maps = {
+            "Innovation Island","Giant Island","Future City (Ruins)",
+            "City of Voldstandig","Hidden Storm Village","City of York",
+            "Shadow Tournament"
+        }
+    end
+    local root = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
+    if not root then return "" end
+    -- pre-lower all candidates
+    local lowers = {}
+    for _,m in ipairs(maps) do lowers[m] = m:lower() end
+    for _,n in ipairs(root:GetDescendants()) do
+        if n:IsA("TextLabel") and typeof(n.Text)=="string" and #n.Text>0 then
+            local txt = n.Text:lower()
+            for orig,low in pairs(lowers) do
+                if txt:find(low, 1, true) then
+                    return orig
+                end
             end
         end
+    end
+    return ""
+end
+
+-- Map loose "type hints" to canonical challenge names used by Filter
+local function canonicalChallengeFromHint(hint)
+    hint = tostring(hint or ""):lower()
+    if hint:find("random",1,true) or hint:find("everything but imagination",1,true) then
+        return "Random Units"
+    end
+    if hint:find("flying",1,true) then
+        return "Flying Enemies"
+    end
+    if hint:find("juggernaut",1,true) then
+        return "Juggernaut Enemies"
+    end
+    if hint:find("single",1,true) then
+        return "Single Placement"
+    end
+    if hint:find("high cost",1,true) or hint:find("increased cost",1,true) then
+        return "High Cost"
     end
     return ""
 end
@@ -315,10 +362,20 @@ local function scan_challenge(i)
     end
 
     local typeHint = (getChallengeTypeHint() or ""):lower()
+    local canonCh  = canonicalChallengeFromHint(typeHint)
+    local mapName  = detectCurrentMapName()
+
+    -- Si el filtro existe y define que este mapa/challenge no está permitido, saltar silenciosamente
+    if Filter and canonCh ~= "" and mapName ~= "" then
+        if not Filter.isAllowed(mapName, canonCh) then
+            return {ok=true, index=i, filtered=true, map=mapName, challenge=canonCh, has_tb=false}
+        end
+    end
+
     local hasTB = false
     pcall(function() hasTB = hasTraitBurner_fast() end)
 
-    return {ok=true, index=i, type_hint=typeHint, has_tb=hasTB}
+    return {ok=true, index=i, type_hint=typeHint, challenge=canonCh, map=mapName, has_tb=hasTB}
 end
 
 -- ===================== MODULE API (controlled by UI) ============================
@@ -339,16 +396,21 @@ function M.start()
             if not running or ENTERED then break end
             local res = scan_challenge(i)
             if res.ok then
-                local hint = res.type_hint or ""
-                local isRandom = (hint:find("random",1,true) ~= nil)
-                               or (hint:find("everything but imagination",1,true) ~= nil)
-                if res.has_tb and not isRandom then
-                    ENTERED = true
-                    start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
-                    task.wait(0.25)
-                    press_start_remote()
-                    FOUND = true
-                    break
+                -- respetar filtro si ya se aplicó dentro de scan_challenge
+                if res.filtered then
+                    -- saltado por filtro del usuario
+                else
+                    local hint = res.type_hint or ""
+                    local isRandom = (hint:find("random",1,true) ~= nil)
+                                   or (hint:find("everything but imagination",1,true) ~= nil)
+                    if res.has_tb and not isRandom then
+                        ENTERED = true
+                        start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
+                        task.wait(0.25)
+                        press_start_remote()
+                        FOUND = true
+                        break
+                    end
                 end
             end
             task.wait(0.12)
@@ -368,16 +430,21 @@ function M.start()
                         if not running or ENTERED then break end
                         local res = scan_challenge(i)
                         if res.ok then
-                            local hint = res.type_hint or ""
-                            local isRandom = (hint:find("random",1,true) ~= nil)
-                                           or (hint:find("everything but imagination",1,true) ~= nil)
-                            if res.has_tb and not isRandom then
-                                ENTERED = true
-                                start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
-                                task.wait(0.25)
-                                press_start_remote()
-                                found = true
-                                break
+                            -- respetar filtro si ya se aplicó dentro de scan_challenge
+                            if res.filtered then
+                                -- saltado por filtro del usuario
+                            else
+                                local hint = res.type_hint or ""
+                                local isRandom = (hint:find("random",1,true) ~= nil)
+                                               or (hint:find("everything but imagination",1,true) ~= nil)
+                                if res.has_tb and not isRandom then
+                                    ENTERED = true
+                                    start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
+                                    task.wait(0.25)
+                                    press_start_remote()
+                                    found = true
+                                    break
+                                end
                             end
                         end
                         task.wait(0.12)
