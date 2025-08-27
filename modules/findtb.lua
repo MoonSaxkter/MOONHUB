@@ -341,53 +341,38 @@ end
 -- - If challenge is empty/undetected => NOT allowed
 -- - Else allowed only if challenge is in the map's allowed set
 local function isAllowedByFilter(mapName, canonCh)
-    -- Fail-closed if the filter module is not available
+    -- Fail-closed: if no filter or bad params, do NOT allow
     if not Filter then return false end
+    if (mapName == nil) or (mapName == "") then return false end
+    if (canonCh == nil) or (canonCh == "") then return false end
 
-    -- If map is missing/undetected, do not allow
-    if (mapName == nil) or (mapName == "") then
+    -- We ONLY trust getAllowed; if it's missing or malformed => block
+    if type(Filter.getAllowed) ~= "function" then
         return false
     end
 
-    -- If challenge is missing/undetected, do not allow
-    if (canonCh == nil) or (canonCh == "") then
-        return false
-    end
-
-    local ok, allowed = pcall(function()
-        -- Preferred: table of allowed challenges per map
-        if type(Filter.getAllowed) == "function" then
-            local t = Filter.getAllowed(mapName)
-            if type(t) == "table" then
-                -- Empty map config => ignore this map
-                if next(t) == nil then
-                    return false
-                end
-                -- Build a set to accept both array-style {"A","B"} and map-style {A=true,B=true}
-                local set = {}
-                for k, v in pairs(t) do
-                    if type(k) == "number" and type(v) == "string" then
-                        set[v] = true
-                    elseif type(k) == "string" and v == true then
-                        set[k] = true
-                    end
-                end
-                return set[canonCh] == true
-            end
-        end
-
-        -- Fallback: direct query
-        if type(Filter.isAllowed) == "function" then
-            return Filter.isAllowed(mapName, canonCh) and true or false
-        end
-
-        -- If we couldn't consult the filter, block by default
-        return false
+    local ok, t = pcall(function()
+        return Filter.getAllowed(mapName)
     end)
-
-    -- On any error evaluating the filter, block
     if not ok then return false end
-    return allowed == true
+
+    -- If map not configured or configured as empty => ignore (block)
+    if type(t) ~= "table" or next(t) == nil then
+        return false
+    end
+
+    -- Build a lowercase set from either {"A","B"} or {A=true,B=true}
+    local set = {}
+    for k, v in pairs(t) do
+        if type(k) == "number" and type(v) == "string" then
+            set[string.lower(v)] = true
+        elseif type(k) == "string" and v == true then
+            set[string.lower(k)] = true
+        end
+    end
+
+    -- Compare case-insensitive against the canonical challenge
+    return set[string.lower(canonCh)] == true
 end
 
 local function clickTextButton(btn)
