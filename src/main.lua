@@ -774,7 +774,6 @@ filterDesc.TextWrapped = true
 
 filterDesc.Parent = filterSection
 
--- === Filter map list with multi-select challenge dropdowns ===
 local FILTER = getgenv and getgenv().MoonFilter
 if not FILTER then
   local ok, mod = pcall(function()
@@ -788,6 +787,44 @@ if not FILTER then
     warn("[Filter] Failed to autoload filter.lua: "..tostring(mod))
   end
 end
+
+-- On first run (no selections yet), push an explicit EMPTY config so FindTB denies-by-default
+pcall(function()
+  if not FILTER then return end
+  -- detect if everything is empty
+  local function mapHasSelections(mapLabel)
+    local arr
+    if type(FILTER.get) == "function" then
+      arr = FILTER.get(mapLabel)
+    elseif type(FILTER.getMap) == "function" then
+      arr = FILTER.getMap(mapLabel)
+    end
+    return type(arr) == "table" and #arr > 0
+  end
+
+  local anySelected = false
+  for _, m in ipairs(MAPS or {}) do
+    if mapHasSelections(m.label) then anySelected = true break end
+  end
+
+  if not anySelected then
+    -- prefer replaceAll({}) if the module exposes it
+    if type(FILTER.replaceAll) == "function" then
+      FILTER.replaceAll({})
+    else
+      for _, m in ipairs(MAPS or {}) do
+        if type(FILTER.setAllowed) == "function" then
+          FILTER.setAllowed(m.label, {})
+        elseif type(FILTER.set) == "function" then
+          FILTER.set(m.label, {})
+        elseif type(FILTER.setMap) == "function" then
+          FILTER.setMap(m.label, {})
+        end
+      end
+    end
+    print("[Filter][UI] initialized empty (deny by default)")
+  end
+end)
 
 -- Maps available for Challenges UI
 local MAPS = {
