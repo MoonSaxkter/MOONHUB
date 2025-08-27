@@ -9,11 +9,139 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 
 -- Verificación de LocalPlayer
+
 local player = Players.LocalPlayer
 if not player then
   warn("[UI] LocalPlayer = nil. Ejecuta este código como LocalScript.")
   return
 end
+
+-- ===== BOOT GATE + LOADING OVERLAY (to avoid clashing with game loading) =====
+repeat task.wait() until game:IsLoaded()
+
+local function isSafeToStart()
+  local okMain = false
+  local okRemotes = false
+  local pg = player:FindFirstChild("PlayerGui")
+  if pg then
+    okMain = pg:FindFirstChild("MainUI", true) ~= nil
+  end
+  okRemotes = ReplicatedStorage:FindFirstChild("Remotes") ~= nil
+  return okMain and okRemotes
+end
+
+local function hasHUDReady()
+  local ok, premiumLabel, cashLabel = pcall(function()
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local mainUI = pg:FindFirstChild("MainUI", true)
+    if not mainUI then return nil, nil end
+    local function findPath(root, ...)
+      local cur = root
+      for _, name in ipairs({...}) do
+        cur = cur and cur:FindFirstChild(name)
+        if not cur then return nil end
+      end
+      return cur
+    end
+    local premium = findPath(mainUI, "MenuFrame", "BottomFrame", "BottomExpand", "CashFrame", "Premium", "ExpandFrame", "TextLabel")
+    local cash    = findPath(mainUI, "MenuFrame", "BottomFrame", "BottomExpand", "CashFrame", "Cash",    "ExpandFrame", "TextLabel")
+    return premium, cash
+  end)
+  if not ok then return false end
+  if not premiumLabel or not cashLabel then return false end
+  -- If either already has non-empty text, consider HUD ready
+  local premText = tostring(premiumLabel.Text or "")
+  local cashText = tostring(cashLabel.Text or "")
+  return (#premText > 0) and (#cashText > 0)
+end
+
+-- Minimal loader overlay
+local loaderGui = Instance.new("ScreenGui")
+loaderGui.Name = "MoonHubLoader"
+loaderGui.ResetOnSpawn = false
+loaderGui.IgnoreGuiInset = true
+loaderGui.DisplayOrder = 10000
+loaderGui.Parent = player:WaitForChild("PlayerGui")
+
+local overlay = Instance.new("Frame")
+overlay.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+overlay.BackgroundTransparency = 0.15
+overlay.Size = UDim2.new(1, 0, 1, 0)
+overlay.Parent = loaderGui
+
+local panel = Instance.new("Frame")
+panel.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+panel.Size = UDim2.new(0, 360, 0, 120)
+panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+panel.AnchorPoint = Vector2.new(0.5, 0.5)
+panel.Parent = overlay
+
+local function _corner(p, r)
+  local c = Instance.new("UICorner")
+  c.CornerRadius = UDim.new(0, r)
+  c.Parent = p
+end
+_corner(panel, 12)
+
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Text = "MOONHUB"
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 18
+title.TextColor3 = Color3.fromRGB(200, 200, 200)
+title.Size = UDim2.new(1, -20, 0, 24)
+title.Position = UDim2.new(0, 10, 0, 12)
+title.Parent = panel
+
+local pct = Instance.new("TextLabel")
+pct.BackgroundTransparency = 1
+pct.Text = "Loading… 0%"
+pct.Font = Enum.Font.SourceSansSemibold
+pct.TextSize = 16
+pct.TextColor3 = Color3.fromRGB(255, 255, 255)
+pct.Size = UDim2.new(1, -20, 0, 24)
+pct.Position = UDim2.new(0, 10, 0, 48)
+pct.Parent = panel
+
+local barBg = Instance.new("Frame")
+barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+barBg.Size = UDim2.new(1, -20, 0, 10)
+barBg.Position = UDim2.new(0, 10, 0, 84)
+barBg.Parent = panel
+_corner(barBg, 6)
+
+local barFill = Instance.new("Frame")
+barFill.BackgroundColor3 = Color3.fromRGB(150, 100, 255)
+barFill.Size = UDim2.new(0, 0, 1, 0)
+barFill.Parent = barBg
+_corner(barFill, 6)
+
+
+local t0 = os.clock()
+local timeout = 30 -- hard cap so it never blocks forever
+local p = 0
+while (os.clock() - t0) < timeout do
+  -- If game core bits are ready OR HUD (gems & gold) is visible, we can finish now
+  if isSafeToStart() or hasHUDReady() then
+    p = 100
+    break
+  end
+  -- Otherwise animate up to 95% while waiting
+  p = math.min(95, math.floor(((os.clock() - t0) / timeout) * 100))
+  pct.Text = ("Loading… %d%%"):format(p)
+  barFill.Size = UDim2.new(p/100, 0, 1, 0)
+  task.wait(0.1)
+end
+
+-- Finalize to 100% and remove overlay
+pct.Text = "Loading… 100%"
+barFill.Size = UDim2.new(1, 0, 1, 0)
+
+-- small delay to let UI settle
+task.wait(0.15)
+loaderGui:Destroy()
+-- ===== END BOOT GATE =====
 
 -- Limpieza previa
 local existingGui = player.PlayerGui:FindFirstChild("MyAwesomeUI")
