@@ -788,43 +788,6 @@ if not FILTER then
   end
 end
 
--- On first run (no selections yet), push an explicit EMPTY config so FindTB denies-by-default
-pcall(function()
-  if not FILTER then return end
-  -- detect if everything is empty
-  local function mapHasSelections(mapLabel)
-    local arr
-    if type(FILTER.get) == "function" then
-      arr = FILTER.get(mapLabel)
-    elseif type(FILTER.getMap) == "function" then
-      arr = FILTER.getMap(mapLabel)
-    end
-    return type(arr) == "table" and #arr > 0
-  end
-
-  local anySelected = false
-  for _, m in ipairs(MAPS or {}) do
-    if mapHasSelections(m.label) then anySelected = true break end
-  end
-
-  if not anySelected then
-    -- prefer replaceAll({}) if the module exposes it
-    if type(FILTER.replaceAll) == "function" then
-      FILTER.replaceAll({})
-    else
-      for _, m in ipairs(MAPS or {}) do
-        if type(FILTER.setAllowed) == "function" then
-          FILTER.setAllowed(m.label, {})
-        elseif type(FILTER.set) == "function" then
-          FILTER.set(m.label, {})
-        elseif type(FILTER.setMap) == "function" then
-          FILTER.setMap(m.label, {})
-        end
-      end
-    end
-    print("[Filter][UI] initialized empty (deny by default)")
-  end
-end)
 
 -- Maps available for Challenges UI
 local MAPS = {
@@ -844,6 +807,48 @@ local CHALLENGE_OPTS = {
   { label = "Single Placement",    key = "single_placement" },
   { label = "High Cost",           key = "high_cost" },
 }
+
+-- Deny-by-default bootstrap (now that MAPS is defined)
+pcall(function()
+  if not FILTER then return end
+
+  -- ¿ya hay algo seleccionado?
+  local hasAny = false
+  if type(FILTER.anySelected) == "function" then
+    hasAny = FILTER.anySelected()
+  else
+    for _, m in ipairs(MAPS) do
+      local arr
+      if type(FILTER.get) == "function" then
+        arr = FILTER.get(m.label)
+      elseif type(FILTER.getMap) == "function" then
+        arr = FILTER.getMap(m.label)
+      end
+      if type(arr) == "table" and next(arr) ~= nil then
+        hasAny = true
+        break
+      end
+    end
+  end
+
+  -- si no hay nada, forzar vacío (deny-by-default)
+  if not hasAny then
+    if type(FILTER.replaceAll) == "function" then
+      FILTER.replaceAll({})
+    else
+      for _, m in ipairs(MAPS) do
+        if type(FILTER.setAllowed) == "function" then
+          FILTER.setAllowed(m.label, {})
+        elseif type(FILTER.set) == "function" then
+          FILTER.set(m.label, {})
+        elseif type(FILTER.setMap) == "function" then
+          FILTER.setMap(m.label, {})
+        end
+      end
+    end
+    print("[FindTB][Filter][UI] Initialized empty config (deny-by-default)")
+  end
+end)
 
 -- Persist UI selection in memory and forward to Filter module if present
 local FilterSelections = {}
@@ -2273,13 +2278,14 @@ end
 local function toggleAutoSelect()
   AutoSelect.enabled = not AutoSelect.enabled
   if AutoSelect.enabled then
-    -- If Auto replay is on, turn it off to avoid conflicts
+    -- Si Auto replay está encendido, apágalo para evitar conflictos
     if AutoReplay and AutoReplay.enabled then
       toggleAutoReplay()
     end
     TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -24, 0.5, 0)}):Play()
     TweenService:Create(asSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
-    -- Immediate pick once enabled
+
+    -- pick inicial
     local initial = chooseMacroForContext()
     if initial then applySelectedMacro(initial) end
     ensureAutoSelectLoop()
@@ -2289,11 +2295,15 @@ local function toggleAutoSelect()
   end
 end
 
+-- Bind: toggle Auto Select por clic/toque
 asSwitch.InputBegan:Connect(function(input)
   if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
     toggleAutoSelect()
   end
 end)
+
+-- Último ajuste de canvas por si algo cambió al final
+recomputeCanvas()
 
 -- Prevent enabling Auto replay while Auto select is active
 local oldToggleAutoReplay = toggleAutoReplay
