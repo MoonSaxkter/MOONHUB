@@ -8,131 +8,194 @@ local ContentProvider = game:GetService("ContentProvider")
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 
--- Verificación de LocalPlayer
 
-local player = Players.LocalPlayer
-if not player then
-  warn("[UI] LocalPlayer = nil. Ejecuta este código como LocalScript.")
-  return
-end
-
--- Show the loader immediately (even before game:IsLoaded) by parenting to CoreGui,
--- then reparent to PlayerGui when available. This guarantees we see the % panel
--- during the "Loading Data 0%" phase when running from autoexec.
-
-local function getUILayer()
-  local ok, cg = pcall(function() return game:GetService("CoreGui") end)
-  if ok and cg then return cg end
-  -- fallback if CoreGui is blocked by the executor
-  return Players.LocalPlayer:WaitForChild("PlayerGui")
-end
-
-local loaderGui = Instance.new("ScreenGui")
-loaderGui.Name = "MoonHubLoader"
-loaderGui.ResetOnSpawn = false
-loaderGui.IgnoreGuiInset = true
-loaderGui.DisplayOrder = 10000
-loaderGui.Parent = getUILayer()
-
--- If PlayerGui appears later, move the loader there so it follows respawns, etc.
-spawn(function()
-  local pg = player:WaitForChild("PlayerGui")
-  if loaderGui and loaderGui.Parent ~= pg then
-    loaderGui.Parent = pg
-  end
-end)
-
-local overlay = Instance.new("Frame")
-overlay.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-overlay.BackgroundTransparency = 0.15
-overlay.Size = UDim2.new(1, 0, 1, 0)
-overlay.Parent = loaderGui
-
-local panel = Instance.new("Frame")
-panel.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
-panel.Size = UDim2.new(0, 360, 0, 120)
-panel.Position = UDim2.new(0.5, 0, 0.5, 0)
-panel.AnchorPoint = Vector2.new(0.5, 0.5)
-panel.Parent = overlay
-
-local function _corner(p, r)
+-- Minimal helpers for the loader (avoid forward-reference to UI utils below)
+local function _corner(parent, radius)
   local c = Instance.new("UICorner")
-  c.CornerRadius = UDim.new(0, r)
-  c.Parent = p
+  c.CornerRadius = UDim.new(0, radius or 8)
+  c.Parent = parent
+  return c
 end
-_corner(panel, 12)
-
-local title = Instance.new("TextLabel")
-title.BackgroundTransparency = 1
-title.Text = "MOONHUB"
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 18
-title.TextColor3 = Color3.fromRGB(200, 200, 200)
-title.Size = UDim2.new(1, -20, 0, 24)
-title.Position = UDim2.new(0, 10, 0, 12)
-title.Parent = panel
-
-local pct = Instance.new("TextLabel")
-pct.BackgroundTransparency = 1
-pct.Text = "Loading… 0%"
-pct.Font = Enum.Font.SourceSansSemibold
-pct.TextSize = 16
-pct.TextColor3 = Color3.fromRGB(255, 255, 255)
-pct.Size = UDim2.new(1, -20, 0, 24)
-pct.Position = UDim2.new(0, 10, 0, 48)
-pct.Parent = panel
-
-local barBg = Instance.new("Frame")
-barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-barBg.Size = UDim2.new(1, -20, 0, 10)
-barBg.Position = UDim2.new(0, 10, 0, 84)
-barBg.Parent = panel
-_corner(barBg, 6)
-
-local barFill = Instance.new("Frame")
-barFill.BackgroundColor3 = Color3.fromRGB(150, 100, 255)
-barFill.Size = UDim2.new(0, 0, 1, 0)
-barFill.Parent = barBg
-_corner(barFill, 6)
-
--- Readiness probes
-local function isSafeToStart()
-  local okMain, okRemotes = false, false
-  local pg = player:FindFirstChild("PlayerGui")
-  if pg then okMain = pg:FindFirstChild("MainUI", true) ~= nil end
-  okRemotes = ReplicatedStorage:FindFirstChild("Remotes") ~= nil
-  return okMain and okRemotes
+local function _stroke(parent, color, thickness, transparency)
+  local s = Instance.new("UIStroke")
+  s.Color = color or Color3.fromRGB(70,70,85)
+  s.Thickness = thickness or 1
+  s.Transparency = transparency or 0.5
+  s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+  s.Parent = parent
+  return s
 end
 
--- Animate percent while waiting for either game:IsLoaded() and our readiness probes
-local t0   = os.clock()
-local cap  = 30  -- hard cap so it never blocks forever
-local p    = 0
 
-while (not game:IsLoaded()) and (os.clock() - t0) < cap do
-  p = math.min(50, math.floor(((os.clock() - t0) / cap) * 100))
-  pct.Text = ("Loading… %d%%"):format(p)
-  barFill.Size = UDim2.new(p/100, 0, 1, 0)
-  task.wait(0.1)
+local player = game:GetService("Players").LocalPlayer
+local function getUILayer()
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok and cg then return cg end
+    return player:WaitForChild("PlayerGui")
 end
 
-local t1 = os.clock()
-while (not isSafeToStart()) and (os.clock() - t1) < cap do
-  -- continue from current p up to 95%
-  p = math.min(95, p + 1)
-  pct.Text = ("Loading… %d%%"):format(p)
-  barFill.Size = UDim2.new(p/100, 0, 1, 0)
-  task.wait(0.1)
+-- allow disabling the loader from autoexec if desired
+if not _G.MOONHUB_NO_LOADER then
+  local loaderGui = Instance.new("ScreenGui")
+  loaderGui.Name = "MoonHubLoader"
+  loaderGui.IgnoreGuiInset = true
+  loaderGui.DisplayOrder = 1_000_000
+  loaderGui.ResetOnSpawn = false
+  loaderGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+  loaderGui.Parent = getUILayer()
+
+  -- Loader card
+  local card = Instance.new("Frame")
+  card.Name = "LoaderCard"
+  card.Size = UDim2.new(0, 420, 0, 120)
+  card.Position = UDim2.new(0.5, 0, 0.82, 0)
+  card.AnchorPoint = Vector2.new(0.5, 0.5)
+  card.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+  card.BackgroundTransparency = 0.1
+  card.Parent = loaderGui
+  _corner(card, 12)
+  _stroke(card, Color3.fromRGB(70, 70, 85), 1, 0.5)
+
+  local title = Instance.new("TextLabel")
+  title.Name = "Title"
+  title.Text = "MOONHUB"
+  title.Font = Enum.Font.SourceSansBold
+  title.TextSize = 28
+  title.TextColor3 = Color3.fromRGB(255,255,255)
+  title.BackgroundTransparency = 1
+  title.Size = UDim2.new(1, -20, 0, 34)
+  title.Position = UDim2.new(0, 10, 0, 8)
+  title.Parent = card
+
+  local subtitle = Instance.new("TextLabel")
+  subtitle.Name = "Subtitle"
+  subtitle.Text = "Loading…"
+  subtitle.Font = Enum.Font.SourceSansSemibold
+  subtitle.TextSize = 16
+  subtitle.TextColor3 = Color3.fromRGB(200,200,210)
+  subtitle.BackgroundTransparency = 1
+  subtitle.Size = UDim2.new(1, -20, 0, 20)
+  subtitle.Position = UDim2.new(0, 10, 0, 44)
+  subtitle.Parent = card
+
+  -- Progress bar background
+  local barBg = Instance.new("Frame")
+  barBg.Name = "BarBg"
+  barBg.Size = UDim2.new(1, -20, 0, 12)
+  barBg.Position = UDim2.new(0, 10, 0, 80)
+  barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+  barBg.Parent = card
+  _corner(barBg, 6)
+
+  -- Progress bar fill
+  local barFill = Instance.new("Frame")
+  barFill.Name = "BarFill"
+  barFill.Size = UDim2.new(0, 0, 1, 0)
+  barFill.BackgroundColor3 = Color3.fromRGB(150, 100, 255)
+  barFill.Parent = barBg
+  _corner(barFill, 6)
+
+  -- Percentage label
+  local pct = Instance.new("TextLabel")
+  pct.Name = "Percent"
+  pct.Text = "0%"
+  pct.Font = Enum.Font.SourceSansBold
+  pct.TextSize = 14
+  pct.TextColor3 = Color3.fromRGB(220,220,230)
+  pct.BackgroundTransparency = 1
+  pct.Size = UDim2.new(1, 0, 0, 16)
+  pct.Position = UDim2.new(0, 0, 0, 96)
+  pct.Parent = card
+
+  local function setProgress(n)
+      n = math.clamp(n or 0, 0, 100)
+      pct.Text = tostring(math.floor(n + 0.5)) .. "%"
+      barFill.Size = UDim2.new(n/100, 0, 1, 0)
+  end
+
+  -- readiness predicate
+  local function uiReady()
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    -- MainUI with some HUD bits (gems/gold) or any child already spawned
+    local main = pg:FindFirstChild("MainUI", true)
+    local hasStats = main and main:FindFirstChild("CashFrame", true)
+    local hasAny  = #pg:GetChildren() > 0
+    return hasStats ~= nil or hasAny
+  end
+
+  -- === Heurística: ¿sigue la pantalla de carga del juego visible? ===
+  local function loadingScreenVisible()
+    local needles = { "loading data", "cargando datos", "loading uis", "teleporting to", "teletransportarse" }
+    local function scan(root)
+      if not root then return false end
+      for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Visible and d.AbsoluteSize.Y > 0 then
+          local t = tostring(d.Text or ""):lower()
+          for _, k in ipairs(needles) do
+            if t:find(k, 1, true) then
+              if (d.TextTransparency or 0) < 0.9 then
+                return true
+              end
+            end
+          end
+        end
+      end
+      return false
+    end
+    local okCore, cg = pcall(function() return game:GetService("CoreGui") end)
+    return scan(player:FindFirstChild("PlayerGui")) or (okCore and scan(cg))
+  end
+
+  -- Loader timing controls
+  local MIN_DISPLAY_SEC   = 5.5   -- tiempo mínimo visible del loader (sensación de carga)
+  local SOFT_CAP_PERCENT  = 72    -- no pasar de este porcentaje hasta que haya señales de UI lista
+  local FINISH_DURATION   = 1.25  -- animación final hasta 100%
+
+  -- Block here until ready (or timeout). This prevents the main UI from building early.
+  local timeoutSec = 75
+  local t0 = os.clock()
+  local progress = 0
+  setProgress(progress)
+
+  -- 1) Fase de “carga”: sube despacio y se detiene en SOFT_CAP_PERCENT hasta que la UI esté lista
+  while (os.clock() - t0) < timeoutSec do
+      if progress < SOFT_CAP_PERCENT then
+          progress = math.min(SOFT_CAP_PERCENT, progress + math.random(1,2))
+          setProgress(progress)
+      end
+
+      local minTimePassed = (os.clock() - t0) >= MIN_DISPLAY_SEC
+      local ui_is_ready   = uiReady()
+      local no_loading_ui = not loadingScreenVisible()
+      local queue_small   = (ContentProvider.RequestQueueSize or 0) <= 1
+
+      if minTimePassed and ui_is_ready and no_loading_ui and queue_small then
+          break
+      end
+
+      task.wait(0.15)
+  end
+
+  -- 2) Fase final: animación suave hasta 100%
+  subtitle.Text = "Ready"
+  local start = progress
+  local t = 0
+  while t < FINISH_DURATION do
+      t = t + task.wait()
+      local alpha = math.clamp(t / FINISH_DURATION, 0, 1)
+      local val = start + (100 - start) * alpha
+      setProgress(val)
+  end
+
+  task.wait(0.12)
+  loaderGui:Destroy()
 end
+-- ===== END LOADER FIX =====
 
--- Finalize to 100% and remove overlay
-pct.Text = "Loading… 100%"
-barFill.Size = UDim2.new(1, 0, 1, 0)
-
--- small delay to let UI settle
-task.wait(0.15)
-if loaderGui then loaderGui:Destroy() end
--- ===== END BOOT GATE =====
+if _G.MOONHUB_NO_LOADER then
+  repeat task.wait() until game:IsLoaded()
+end
 
 -- Limpieza previa
 local existingGui = player.PlayerGui:FindFirstChild("MyAwesomeUI")
