@@ -355,6 +355,63 @@ if _G.MOONHUB_NO_LOADER then
   repeat task.wait() until game:IsLoaded()
 end
 
+-- ===== PERSISTENCE: FS + Config (config.json) =====
+local HttpService = game:GetService("HttpService")
+
+-- FS helpers (syn/krnl/otros)
+local FS = {}
+do
+  local g = getgenv and getgenv() or _G or {}
+  FS.writefile  = rawget(g, "writefile")  or (rawget(g, "syn") and g.syn.writefile) or (rawget(g, "krnl") and g.krnl.writefile)
+  FS.readfile   = rawget(g, "readfile")   or (rawget(g, "syn") and g.syn.readfile)
+  FS.isfile     = rawget(g, "isfile")     or (rawget(g, "syn") and g.syn.isfile)
+  FS.isfolder   = rawget(g, "isfolder")   or (rawget(g, "syn") and g.syn.isfolder)
+  FS.makefolder = rawget(g, "makefolder") or (rawget(g, "syn") and g.syn.makefolder)
+end
+
+local Config = {
+  path = "MoonHub/config.json",
+  data = {
+    toggles = {
+      findTB     = false,
+      autoReplay = false,
+      autoSelect = false,
+    },
+    selectedMacro = nil,
+    filters = {} -- { ["Innovation Island"] = {"Flying Enemies","Unsellable"}, ... }
+  }
+}
+
+local function ensureConfigFolder()
+  if FS.isfolder and not FS.isfolder("MoonHub") and FS.makefolder then
+    pcall(FS.makefolder, "MoonHub")
+  end
+end
+
+local function saveConfig()
+  if not (FS.writefile and HttpService) then return end
+  ensureConfigFolder()
+  local ok, json = pcall(function() return HttpService:JSONEncode(Config.data) end)
+  if ok then pcall(FS.writefile, Config.path, json) end
+end
+
+local function loadConfig()
+  if not (FS.isfile and FS.readfile and HttpService) then return end
+  if not FS.isfile(Config.path) then return end
+  local ok, raw = pcall(FS.readfile, Config.path)
+  if not ok or not raw or #raw == 0 then return end
+  local ok2, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+  if ok2 and typeof(decoded) == "table" then
+    Config.data = decoded
+    -- defaults por si faltan claves
+    Config.data.toggles = Config.data.toggles or { findTB=false, autoReplay=false, autoSelect=false }
+    Config.data.filters = Config.data.filters or {}
+  end
+end
+
+loadConfig()
+-- ===== END PERSISTENCE HEADER =====
+
 -- Limpieza previa
 local existingGui = player.PlayerGui:FindFirstChild("MyAwesomeUI")
 if existingGui then existingGui:Destroy() end
@@ -806,6 +863,7 @@ local CHALLENGE_OPTS = {
   { label = "Juggernaut Enemies", key = "juggernaut_enemies" },
   { label = "Single Placement",    key = "single_placement" },
   { label = "High Cost",           key = "high_cost" },
+  { label = "Unsellable",          key = "unsellable" },
 }
 
 -- Deny-by-default bootstrap (now that MAPS is defined)
@@ -862,6 +920,14 @@ local function syncFilter(mapLabel)
       if v then table.insert(list, challengeLabel) end
     end
   end
+
+    -- Persistir selección en config.json
+  if Config and Config.data then
+    Config.data.filters[mapLabel] = list
+    saveConfig()
+  end
+
+
   -- Push to filter module using the *display label* for the map
   pcall(function()
     if FILTER and type(FILTER.setAllowed) == "function" then
@@ -1024,9 +1090,11 @@ local function createMapFilter(map)
     if openFilterRow == row then openFilterRow = nil end
     updateFilterCanvas()
   end
-  
-  -- Initialize selection set from module (if any)
+
+  -- === Selección interna del UI para este mapa
   FilterSelections[map.label] = FilterSelections[map.label] or {}
+
+  -- 1) Precarga desde el módulo FILTER (si trae algo)
   pcall(function()
     if FILTER and type(FILTER.get) == "function" then
       local arr = FILTER.get(map.label) or {}
@@ -1037,7 +1105,14 @@ local function createMapFilter(map)
     end
   end)
 
-  -- Build check rows
+  -- 2) Precarga desde config.json (tiene prioridad para reflejar lo guardado)
+  if Config and Config.data and Config.data.filters and Config.data.filters[map.label] then
+    for _, lbl in ipairs(Config.data.filters[map.label]) do
+      FilterSelections[map.label][lbl] = true
+    end
+  end
+
+  -- Build one option row
   local function addOption(opt)
     local orow = Instance.new("TextButton")
     orow.AutoButtonColor = false
@@ -1092,7 +1167,7 @@ local function createMapFilter(map)
       FilterSelections[map.label][opt.label] = not cur and true or nil
       btn.Text = summarizeSelection(FilterSelections[map.label]) .. " ▾"
       refresh()
-      syncFilter(map.label)
+      syncFilter(map.label)  -- <== esto también guarda en config.json
       closePopup()
     end)
 
@@ -1107,20 +1182,17 @@ local function createMapFilter(map)
     refresh()
   end
 
+  -- Construir todas las opciones
   for _,opt in ipairs(CHALLENGE_OPTS) do
     addOption(opt)
   end
 
-  -- Button to open/close popup
+  -- Botón abre/cierra
   btn.MouseButton1Click:Connect(function()
-    if popup.Visible then
-      closePopup()
-    else
-      openPopup()
-    end
+    if popup.Visible then closePopup() else openPopup() end
   end)
 
-  -- Initialize button summary text
+  -- Texto inicial del botón
   btn.Text = summarizeSelection(FilterSelections[map.label]) .. " ▾"
 end
 
@@ -1163,28 +1235,45 @@ local function ensureFindTB()
   return false
 end
 
+-- Helpers para el toggle de FindTB
+local function setTBVisual(on, tween)
+  if on then
+    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0,0.5)
+    }):Play()
+    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = COLORS.accent }):Play()
+  else
+    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0,0.5)
+    }):Play()
+    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(20,20,20) }):Play()
+  end
+end
+
+local function startFindTB()
+  _G.FindTBActive = true
+  if ensureFindTB() and FindTBModule and FindTBModule.start then
+    pcall(FindTBModule.start)
+  end
+end
+
+local function stopFindTB()
+  _G.FindTBActive = false
+  if FindTBModule and FindTBModule.stop then
+    pcall(FindTBModule.stop)
+  end
+end
+
 local function toggleTB()
   isTBActive = not isTBActive
-  if isTBActive then
-    -- UI ON
-    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0,0.5) }):Play()
-    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = COLORS.accent }):Play()
+  setTBVisual(isTBActive, true)
+  if isTBActive then startFindTB() else stopFindTB() end
 
-    -- Only signal and call the external module
-    _G.FindTBActive = true
-    if ensureFindTB() and FindTBModule and FindTBModule.start then
-      pcall(FindTBModule.start)
-    end
-  else
-    -- UI OFF
-    TweenService:Create(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), { Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0,0.5) }):Play()
-    TweenService:Create(toggleSwitch, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(20,20,20) }):Play()
-
-    -- Tell the external module to stop and lower the flag
-    _G.FindTBActive = false
-    if FindTBModule and FindTBModule.stop then
-      pcall(FindTBModule.stop)
-    end
+  -- Guardar estado en config.json
+  if Config and Config.data then
+    Config.data.toggles = Config.data.toggles or {}
+    Config.data.toggles.findTB = isTBActive
+    saveConfig()
   end
 end
 
@@ -1193,6 +1282,7 @@ toggleSwitch.InputBegan:Connect(function(input)
     toggleTB()
   end
 end)
+
 
 -- Página Macro System
 local macroPage = Instance.new("Frame")
@@ -1298,6 +1388,31 @@ statusDesc.TextXAlignment = Enum.TextXAlignment.Left
 statusDesc.Parent = controlPanel
 -- forward declaration so helpers above can call it before its definition
 local updateStatus
+
+-- === Helpers to keep status message consistent and avoid false warnings
+local function shakeFrame(f)
+  -- tiny shake animation used for invalid toggle attempts
+  if not f or not f.Parent then return end
+  local p0 = f.Position
+  local tweenInfo = TweenInfo.new(0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+  TweenService:Create(f, tweenInfo, {Position = p0 + UDim2.new(0, 6, 0, 0)}):Play()
+  task.wait(0.05)
+  TweenService:Create(f, tweenInfo, {Position = p0 + UDim2.new(0, -6, 0, 0)}):Play()
+  task.wait(0.05)
+  TweenService:Create(f, tweenInfo, {Position = p0}):Play()
+end
+
+local function refreshMacroStatusMessage()
+  if updateStatus then
+    if AutoReplay and AutoReplay.enabled then
+      updateStatus("idle", "Auto replay enabled")
+    elseif AutoSelect and AutoSelect.enabled then
+      updateStatus("idle", "Auto select macro enabled")
+    else
+      updateStatus("idle", "Ready to record")
+    end
+  end
+end
 
 
 -- ===== FILESYSTEM HELPERS (moved up so dropdown can use them) =====
@@ -2019,15 +2134,39 @@ local function ensureAutoReplayLoop()
 end
 
 local function toggleAutoReplay()
-  AutoReplay.enabled = not AutoReplay.enabled
+  local wantEnable = not AutoReplay.enabled
+-- Guard: no se puede habilitar si Auto Select está activo
+if wantEnable and AutoSelect and AutoSelect.enabled then
+  updateStatus("idle", "Disable Auto select macro first")
+  shakeFrame(arSwitch)
+  return
+end
+
+  AutoReplay.enabled = wantEnable
+
   if AutoReplay.enabled then
-    TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -24, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
+    TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(1, -24, 0.5, 0),
+      AnchorPoint = Vector2.new(0, 0.5)
+    }):Play()
     TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
     ensureAutoReplayLoop()
   else
-    TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = UDim2.new(0, 2, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5)}):Play()
-    TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20, 20, 20)}):Play()
+    TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(0, 2, 0.5, 0),
+      AnchorPoint = Vector2.new(0, 0.5)
+    }):Play()
+    TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20,20,20)}):Play()
   end
+
+  -- Persist
+  if Config and Config.data then
+    Config.data.toggles = Config.data.toggles or {}
+    Config.data.toggles.autoReplay = AutoReplay.enabled
+    saveConfig()
+  end
+
+  refreshMacroStatusMessage()
 end
 
 arSwitch.InputBegan:Connect(function(input)
@@ -2093,6 +2232,129 @@ asDesc.TextXAlignment = Enum.TextXAlignment.Left
 asDesc.TextYAlignment = Enum.TextYAlignment.Top
 asDesc.TextWrapped = true
 asDesc.Parent = autoSelectBox
+
+-- Logic state for Auto Select
+local AutoSelect = { enabled = false }
+
+local function ensureAutoSelectLoop()
+  -- placeholder/hook; your existing implementation can live here
+end
+
+local function setASVisual(on)
+  if on then
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(1, -24, 0.5, 0),
+      AnchorPoint = Vector2.new(0,0.5)
+    }):Play()
+    TweenService:Create(asSwitch, TweenInfo.new(0.2), { BackgroundColor3 = COLORS.accent }):Play()
+  else
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(0, 2, 0.5, 0),
+      AnchorPoint = Vector2.new(0,0.5)
+    }):Play()
+    TweenService:Create(asSwitch, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(20,20,20) }):Play()
+  end
+end
+
+local function toggleAutoSelect()
+  local wantEnable = not AutoSelect.enabled
+-- Guard: no se puede habilitar si Auto Replay está activo
+if wantEnable and AutoReplay and AutoReplay.enabled then
+  updateStatus("idle", "Disable Auto replay first")
+  shakeFrame(asSwitch)
+  return
+end
+
+  AutoSelect.enabled = wantEnable
+  setASVisual(AutoSelect.enabled)
+  ensureAutoSelectLoop()
+
+  -- Persist
+  if Config and Config.data then
+    Config.data.toggles = Config.data.toggles or {}
+    Config.data.toggles.autoSelect = AutoSelect.enabled
+    saveConfig()
+  end
+
+  refreshMacroStatusMessage()
+end
+
+asSwitch.InputBegan:Connect(function(input)
+  if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    toggleAutoSelect()
+  end
+end)
+
+-- === Restore persisted toggle states (after controls exist) ===
+task.spawn(function()
+  -- wait until UI pieces exist to avoid nil references
+  while not (toggleSwitch and toggleKnob and arSwitch and arKnob and asSwitch and asKnob) do
+    task.wait(0.05)
+  end
+
+  local tg = (Config and Config.data and Config.data.toggles) or {}
+
+  -- Find Trait Burner
+  if tg.findTB then
+    if not isTBActive then
+      isTBActive = true
+      setTBVisual(true, false)
+      startFindTB()
+    end
+  else
+    setTBVisual(false, false)
+  end
+
+  -- Auto replay
+  if tg.autoReplay then
+    AutoReplay.enabled = true
+    arKnob.Position = UDim2.new(1, -24, 0.5, 0)
+    arKnob.AnchorPoint = Vector2.new(0, 0.5)
+    arSwitch.BackgroundColor3 = COLORS.accent
+    ensureAutoReplayLoop()
+  else
+    AutoReplay.enabled = false
+
+    arKnob.Position = UDim2.new(0, 2, 0.5, 0)
+    arKnob.AnchorPoint = Vector2.new(0, 0.5)
+    arSwitch.BackgroundColor3 = Color3.fromRGB(20,20,20)
+  end
+
+  -- Auto select macro
+  if tg.autoSelect then
+    AutoSelect.enabled = true
+    asKnob.Position = UDim2.new(1, -24, 0.5, 0)
+    asKnob.AnchorPoint = Vector2.new(0, 0.5)
+    asSwitch.BackgroundColor3 = COLORS.accent
+    ensureAutoSelectLoop()
+  else
+    -- ⬇
+  AutoSelect.enabled = false
+    -- ⬆
+    asKnob.Position = UDim2.new(0, 2, 0.5, 0)
+    asKnob.AnchorPoint = Vector2.new(0, 0.5)
+    asSwitch.BackgroundColor3 = Color3.fromRGB(20,20,20)
+  end
+
+  -- refresca el mensaje de estado al final del restore
+if refreshMacroStatusMessage then refreshMacroStatusMessage() end
+
+  -- Resolve impossible state if both were true in config: prefer Auto select
+  if AutoReplay.enabled and AutoSelect.enabled then
+    -- turn off Auto replay visually and logically
+    AutoReplay.enabled = false
+    arKnob.Position = UDim2.new(0, 2, 0.5, 0)
+    arKnob.AnchorPoint = Vector2.new(0, 0.5)
+    arSwitch.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    if Config and Config.data and Config.data.toggles then
+      Config.data.toggles.autoReplay = false
+      saveConfig()
+    end
+  end
+
+  -- Normalize the status text after restoring toggles
+  refreshMacroStatusMessage()
+end)
 
 -- ===== AUTO SELECT MACRO INFO PANEL =====
 -- Info panel explaining macro file naming
