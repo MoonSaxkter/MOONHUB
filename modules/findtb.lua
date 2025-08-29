@@ -49,6 +49,11 @@ local TB_EVENT_WINDOW  = 1.3
 local CHAPTER          = 1
 local DIFFICULTY       = "Hard"
 
+-- === Forward declarations for functions used before their definitions ===
+local findStageScroll   -- defined later
+local descend           -- defined later
+local tpToChallengePod  -- defined later
+
 -- Espera a que el UI de Challenges esté realmente listo
 local function waitForChallengeUI(totalTimeout)
     totalTimeout = totalTimeout or 12
@@ -74,10 +79,7 @@ end
 local LAST_SELECTED = "Challenge1"
 local ENTERED       = false
 
--- ------------------------------------------------------------
--- Util: descender por ruta con espera
--- ------------------------------------------------------------
-local function descend(root, segments, timeout)
+descend = function(root, segments, timeout)
     local t0 = tick()
     local node = root
     for _,name in ipairs(segments) do
@@ -154,10 +156,7 @@ local function robustClick(btn)
     return true
 end
 
--- ------------------------------------------------------------
--- TP al Pod de Challenges
--- ------------------------------------------------------------
-local function tpToChallengePod()
+tpToChallengePod = function()
     local obj = workspace:FindFirstChild("Map")
               and workspace.Map:FindFirstChild("Buildings")
               and workspace.Map.Buildings:FindFirstChild("ChallengePods")
@@ -249,8 +248,7 @@ local function press_start_remote()
     pcall(function() RF:InvokeServer(payload) end)
 end
 
--- ===================== Helpers StageScroll + EXPERT refresh =========
-local function findStageScroll()
+findStageScroll = function()
     local ok, scroll = pcall(function()
         return PG.MainUI.WorldFrame.WorldFrame.MainFrame.StageFrame.Stages.StageScroll
     end)
