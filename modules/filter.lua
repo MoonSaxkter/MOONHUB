@@ -25,6 +25,7 @@ local CHALLENGES = {
   "Juggernaut Enemies",
   "Single Placement",
   "High Cost",
+  "Unsellable",
 }
 
 -- normalización de nombres
@@ -220,11 +221,22 @@ function Filter.isAllowed(mapName, challengeName)
   if FORBIDDEN[norm(challengeName)] then return false end
 
   local mk = MAP_BY_KEY[norm(mapName)]
-  if not mk then return false end
-  local ck = CHAL_BY_KEY[norm(challengeName)]
-  if not ck then return false end
+  if not mk then
+    return true -- mapa desconocido => allow-all
+  end
   local set = state.allowed[mk]
-  return set and set[ck] == true or false
+  if not set then
+    return true -- no hay entrada para el mapa => allow-all
+  end
+  -- si la entrada existe pero está vacía => deny-all para ese mapa
+  if next(set) == nil then
+    return false
+  end
+  local ck = CHAL_BY_KEY[norm(challengeName)]
+  if not ck then
+    return false
+  end
+  return set[ck] == true
 end
 
 -- Util para UI: listas maestras
@@ -267,6 +279,33 @@ function Filter.import(tbl)
   state.allowed = empty and defaultAllowed() or out
   pcall(Filter.save)
   return okAll
+end
+
+-- Reemplaza todo el estado allowed con un snapshot confiable
+function Filter.replaceAll(tbl)
+  if type(tbl) ~= "table" then return false, "invalid" end
+  local out = {}
+  for m, set in pairs(tbl) do
+    local mk = MAP_BY_KEY[norm(m)]
+    if mk then
+      out[mk] = {}
+      if type(set) == "table" then
+        for c, v in pairs(set) do
+          local keyC = norm(c)
+          if not FORBIDDEN[keyC] then
+            local ck = CHAL_BY_KEY[keyC]
+            if ck and v == true then
+              out[mk][ck] = true
+            end
+          end
+        end
+      end
+    end
+    -- claves inválidas se ignoran sin afectar ok
+  end
+  state.allowed = out
+  pcall(Filter.save)
+  return true
 end
 
 -- Reset total

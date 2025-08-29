@@ -522,6 +522,18 @@ function Hub.build(player, Config)
     end
   end
 
+  -- Snapshot global de filtros para pasar a MoonFilter.replaceAll
+  local function buildFilterSnapshot()
+    local snap = {}
+    for mLabel, set in pairs(FilterSelections) do
+      snap[mLabel] = {}
+      for cLabel, on in pairs(set) do
+        if on then snap[mLabel][cLabel] = true end
+      end
+    end
+    return snap
+  end
+
   -- Pretty summary for the button text
   local function summarizeSelection(set)
     local n = 0
@@ -735,6 +747,11 @@ function Hub.build(player, Config)
         saveConfig()
         filtersChanged:Fire()
         _G.MoonEvents.filtersChanged:Fire()
+        -- Empujar todo el estado de filtros al módulo global (si existe)
+        local FilterMod = rawget(getgenv() or _G, "MoonFilter")
+        if FilterMod and type(FilterMod.replaceAll) == "function" then
+          pcall(FilterMod.replaceAll, buildFilterSnapshot())
+        end
         closePopup()
       end)
 
@@ -1599,6 +1616,12 @@ Notes:
       updateStatus("idle", "Auto select macro enabled")
     else
       updateStatus("idle", "Ready to record")
+    end
+
+    -- Al iniciar, informar los filtros actuales al módulo global (si está disponible)
+    local FilterMod = rawget(getgenv() or _G, "MoonFilter")
+    if FilterMod and type(FilterMod.replaceAll) == "function" then
+      pcall(FilterMod.replaceAll, buildFilterSnapshot())
     end
   end)
 
