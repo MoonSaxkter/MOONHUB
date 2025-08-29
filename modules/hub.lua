@@ -10,6 +10,8 @@
     - events.findTBChanged : RBXScriptSignal(boolean isOn)
       Se dispara cuando el usuario cambia el toggle "Find Trait Burner"
       (o cuando alguien llama a hub.toggles.findTB.set()).
+    - events.filtersChanged : RBXScriptSignal()
+      Se dispara cuando cambia la selección de filtros.
 
   ► Toggles expuestos (lógica externa → UI)
     - toggles.findTB.active() -> bool
@@ -85,6 +87,16 @@ function Hub.build(player, Config)
   local lastGems, lastCash, lastTB = nil, nil, nil
   local isDragging = false
   local currentTab = "Features"
+
+  -- === Global bus (optional) for external listeners / debug ===
+  _G.MoonEvents = _G.MoonEvents or {}
+  _G.MoonEvents.findTBChanged = _G.MoonEvents.findTBChanged or Instance.new("BindableEvent")
+  _G.MoonEvents.filtersChanged = _G.MoonEvents.filtersChanged or Instance.new("BindableEvent")
+
+  -- === Local UI-out events (must exist before any UI callbacks use them) ===
+  local findTBChanged = Instance.new("BindableEvent")
+  local filtersChanged = Instance.new("BindableEvent")
+  
 
   -- === Config helpers (persist in-memory or via provided Config.save) ===
   Config = typeof(Config) == "table" and Config or {}
@@ -500,6 +512,15 @@ function Hub.build(player, Config)
 
   -- Persist UI selection in memory
   local FilterSelections = {}
+  -- Precargar selección desde configuración persistida
+  for mapLabel, list in pairs(Config.data and Config.data.filters or {}) do
+    FilterSelections[mapLabel] = FilterSelections[mapLabel] or {}
+    if typeof(list) == "table" then
+      for _, challLabel in ipairs(list) do
+        FilterSelections[mapLabel][challLabel] = true
+      end
+    end
+  end
 
   -- Pretty summary for the button text
   local function summarizeSelection(set)
@@ -712,6 +733,8 @@ function Hub.build(player, Config)
         end
         Config.data.filters[map.label] = list
         saveConfig()
+        filtersChanged:Fire()
+        _G.MoonEvents.filtersChanged:Fire()
         closePopup()
       end)
 
@@ -765,7 +788,6 @@ function Hub.build(player, Config)
   -- === Eventos de salida (UI -> lógica externa) ===
   -- Se emite SIEMPRE que cambie el estado del toggle FindTB, ya sea por
   -- interacción del usuario o por llamada programática a toggles.findTB.set().
-  local findTBChanged = Instance.new("BindableEvent")
 
   -- Helpers para el toggle de FindTB
   local function setTBVisual(on, tween)
@@ -784,31 +806,36 @@ function Hub.build(player, Config)
 
   local function toggleTB()
     isTBActive = not isTBActive
+    print("[Hub] FindTB toggle ->", isTBActive)
     setTBVisual(isTBActive, true)
     -- Notificar a consumidores externos (main.lua / findtb.lua)
     findTBChanged:Fire(isTBActive)
+    _G.MoonEvents.findTBChanged:Fire(isTBActive)
 
     -- Persist toggle
     Config.data.toggles.findTB = isTBActive
     saveConfig()
 
-    -- Notify external finder (kept outside hub to stay ordered)
-    local ok = pcall(function()
-      if getgenv and getgenv().FindTB and typeof(getgenv().FindTB) == "table" then
-        if isTBActive and typeof(getgenv().FindTB.start) == "function" then getgenv().FindTB.start() end
-        if (not isTBActive) and typeof(getgenv().FindTB.stop) == "function" then getgenv().FindTB.stop() end
-      else
-        _G.FindTBActive = isTBActive
-      end
-    end)
-    if not ok then _G.FindTBActive = isTBActive end
   end
 
-  toggleSwitch.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-      toggleTB()
+  -- Debounced input handler to avoid double-toggles when multiple GUI objects receive the same click
+  local tbDebounce = false
+  local function handleTBInput(input)
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+      return
     end
-  end)
+    if tbDebounce then return end
+    tbDebounce = true
+    toggleTB()
+    task.delay(0.15, function()
+      tbDebounce = false
+    end)
+  end
+
+  -- Wire the same handler to all clickable parts of the switch
+  toggleSwitch.InputBegan:Connect(handleTBInput)
+  toggleKnob.InputBegan:Connect(handleTBInput)
+  toggleContainer.InputBegan:Connect(handleTBInput)
 
   -- Página Macro System
   local macroPage = Instance.new("Frame")
@@ -955,7 +982,6 @@ function Hub.build(player, Config)
   local function ensureAutoSelectLoop() end  
   local function chooseMacroForContext() return nil end
   local function applySelectedMacro(name) end
-  local function saveConfig() end
 
   local function refreshMacroStatusMessage()
     if updateStatus then
@@ -1528,10 +1554,9 @@ Notes:
     if tg.findTB then
       isTBActive = true
       setTBVisual(true, false)
-      -- signal external if present
-      pcall(function()
-        if getgenv and getgenv().FindTB and typeof(getgenv().FindTB.start)=="function" then getgenv().FindTB.start() end
-      end)
+      -- Notify listeners so main.lua/consumers learn initial ON state
+      findTBChanged:Fire(true)
+      _G.MoonEvents.findTBChanged:Fire(true)
     else
       setTBVisual(false, false)
     end
@@ -1792,6 +1817,7 @@ Notes:
     events = {
       -- Señal que emite el estado del toggle FindTB (true/false)
       findTBChanged = findTBChanged.Event,
+      filtersChanged = filtersChanged.Event,
     },
     
     -- API para expandir funcionalidad
@@ -1813,11 +1839,13 @@ Notes:
         active = function() return isTBActive end,
         set = function(state)
           isTBActive = state and true or false
+          print("[Hub] findTB.set ->", isTBActive)
           setTBVisual(isTBActive)
           Config.data.toggles.findTB = isTBActive
           saveConfig()
           -- Emitir evento para mantener sincronizada la lógica externa
           findTBChanged:Fire(isTBActive)
+          _G.MoonEvents.findTBChanged:Fire(isTBActive)
         end
       },
       autoReplay = {

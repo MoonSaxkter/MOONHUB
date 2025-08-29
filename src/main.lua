@@ -216,6 +216,14 @@ local function ensureFindTB()
 
   -- Guardar el módulo para futuras llamadas
   FindTB.module = mod
+
+  -- Log de capacidades detectadas para facilitar debugging
+  local caps = {}
+  for _,k in ipairs({"enable","disable","start","stop","setFilters"}) do
+    if type(mod[k]) == "function" then table.insert(caps, k) end
+  end
+  print("[Main] findtb.lua cargado; API:", table.concat(caps, ", "))
+
   return true
 end
 
@@ -248,7 +256,18 @@ end
 -- Luego, si el módulo expone 'setFilters', le pasa los filtros actuales para sincronizar.
 -- Marca internamente que findtb está activo.
 local function startFindTB()
+  -- Evita arranques duplicados; útil si el hub emite evento al restaurar estado
+  if FindTB.active then
+    print("[Main] startFindTB(): ya activo, omito")
+    -- Aun así re-sincronizamos filtros por si cambiaron mientras estaba activo
+    local filters = readFiltersSnapshot()
+    callFindTB('setFilters', filters)
+    return
+  end
+
   if not ensureFindTB() then return end
+
+  print("[Main] Iniciando FindTB…")
 
   -- Construir opciones para el módulo findtb
   local opts = buildFindTBOpts()
@@ -271,6 +290,12 @@ end
 -- Intenta llamar a 'disable()', si no existe, llama a 'stop()'.
 -- Marca internamente que findtb está inactivo.
 local function stopFindTB()
+  -- Evita stops redundantes
+  if not FindTB.active and not FindTB.module then
+    print("[Main] stopFindTB(): ya detenido")
+    return
+  end
+
   if not FindTB.module then return end
 
   -- Intentar deshabilitar con disable()
@@ -278,6 +303,8 @@ local function stopFindTB()
     -- Si disable no existe o falla, intentar stop()
     callFindTB('stop')
   end
+
+  print("[Main] FindTB detenido")
 
   -- Marcar findtb como inactivo
   FindTB.active = false
@@ -287,65 +314,78 @@ end
 -- Esta sección conecta eventos públicos expuestos por el hub con la lógica
 -- para controlar findtb y persistir cambios en la configuración.
 
--- Función auxiliar para conectar un BindableEvent si existe y es válido.
--- Recibe el evento, un nombre descriptivo para logs y un callback.
--- Retorna true si la conexión fue exitosa, false si no se pudo conectar.
+-- Función auxiliar para conectar señales provenientes del hub, soportando
+-- tanto RBXScriptSignal (cuando el hub exporta `BindableEvent.Event`) como
+-- BindableEvent (cuando el hub exporta el `BindableEvent` completo).
+--  • Devuelve true si logró conectar; false en caso contrario.
+--  • Loguea de forma clara el tipo de suscripción.
 local function connectIf(ev, name, cb)
-  if ev and typeof(ev) == "Instance" and ev:IsA("BindableEvent") then
-    ev.Event:Connect(cb)
-    print("[Main] Suscrito:", name)
+  -- Caso A: el hub puede habernos pasado directamente un RBXScriptSignal
+  -- (por ejemplo, hub.events.findTBChanged = findTBChanged.Event)
+  if ev and typeof(ev) == "RBXScriptSignal" then
+    ev:Connect(cb)
+    print("[Main] Suscrito (signal):", name)
     return true
   end
+
+  -- Caso B: el hub nos pasó el BindableEvent completo y debemos usar .Event
+  if ev and typeof(ev) == "Instance" and ev:IsA("BindableEvent") then
+    ev.Event:Connect(cb)
+    print("[Main] Suscrito (bindable):", name)
+    return true
+  end
+
+  -- No se pudo conectar: tipo inesperado o nil
+  warn("[Main] No se pudo suscribir (", name, ") tipo=", typeof(ev))
   return false
 end
 
--- a) Toggle FindTB desde la UI
--- Se suscribe al evento findTBChanged que indica si el toggle findTB fue activado/desactivado.
--- Al activarse:
---   - Se persiste el nuevo estado en Config.data.toggles.findTB y se guarda en disco.
---   - Se inicia la lógica de findtb llamando a startFindTB().
--- Al desactivarse:
---   - Se persiste el estado actualizado.
---   - Se detiene la lógica de findtb llamando a stopFindTB().
-if hub and hub.events and hub.events.findTBChanged then
-  connectIf(hub.events.findTBChanged, "findTBChanged", function(isOn)
+local function wireFindTBChanged(ev)
+  connectIf(ev, "findTBChanged", function(isOn)
     print("[Main] findTBChanged =>", isOn)
 
-    -- Persistimos el toggle (por si el hub no lo hace)
     Config.data.toggles = Config.data.toggles or {}
     Config.data.toggles.findTB = not not isOn
     Config.save()
 
     if isOn then
-      -- Iniciar findtb si el toggle está activo
       startFindTB()
     else
-      -- Detener findtb si el toggle está desactivado
       stopFindTB()
     end
   end)
-else
-  warn("[Main] hub.events.findTBChanged no disponible; el toggle no controlará findtb")
 end
 
--- b) Si el hub expone cambios de filtros, actualizamos findtb y persistimos
--- Se suscribe al evento filtersChanged que indica que los filtros fueron modificados.
--- Al ocurrir:
---   - Se obtiene un snapshot actualizado de filtros desde el hub.
---   - Se persiste la nueva configuración de filtros en Config.data.filters y se guarda.
---   - Se notifica a findtb para que actualice sus filtros internos mediante setFilters.
-if hub and hub.events and hub.events.filtersChanged then
-  connectIf(hub.events.filtersChanged, "filtersChanged", function()
-    -- Obtener snapshot actualizado de filtros activos
-    local snap = readFiltersSnapshot()
+if hub and hub.events and hub.events.findTBChanged then
+  wireFindTBChanged(hub.events.findTBChanged)
+else
+  -- Fallback: usar bus global si el hub aún no exporta eventos como módulo.
+  local ok, bus = pcall(function() return _G.MoonEvents end)
+  if ok and bus and typeof(bus.findTBChanged) == "Instance" then
+    wireFindTBChanged(bus.findTBChanged)
+    print("[Main] Fallback: suscrito a _G.MoonEvents.findTBChanged")
+  else
+    warn("[Main] findTBChanged no disponible (ni hub.events ni _G.MoonEvents)")
+  end
+end
 
-    -- Persistir filtros en configuración
+local function wireFiltersChanged(ev)
+  connectIf(ev, "filtersChanged", function()
+    local snap = readFiltersSnapshot()
     Config.data.filters = snap
     Config.save()
-
-    -- Notificar a findtb para sincronizar filtros
     callFindTB('setFilters', snap)
   end)
+end
+
+if hub and hub.events and hub.events.filtersChanged then
+  wireFiltersChanged(hub.events.filtersChanged)
+else
+  local ok, bus = pcall(function() return _G.MoonEvents end)
+  if ok and bus and typeof(bus.filtersChanged) == "Instance" then
+    wireFiltersChanged(bus.filtersChanged)
+    print("[Main] Fallback: suscrito a _G.MoonEvents.filtersChanged")
+  end
 end
 
 -- c) Restaura estado FindTB desde config (si UI no lo hace por sí misma)
