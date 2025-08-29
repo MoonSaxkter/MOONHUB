@@ -66,6 +66,7 @@ local player         = Players.LocalPlayer
 local BASE       = "https://raw.githubusercontent.com/MoonSaxkter/MOONHUB/main/modules/"
 local HUB_URL    = BASE .. "hub.lua"
 local FINDTB_URL = BASE .. "findtb.lua"
+local MACRO_URL  = BASE .. "macrosys.lua"
 
 -- === 2) Helpers genéricos ===
 local function httpGet(url)
@@ -89,6 +90,61 @@ local function ensureFolder(path)
   if FS.isfolder and not FS.isfolder(path) and FS.makefolder then
     pcall(FS.makefolder, path)
   end
+end
+
+-- === 2.5) Integración con macrosys.lua (MacroAPI global) ===
+-- Responsabilidad: descargar/ejecutar `macrosys.lua` y publicar `getgenv().MacroAPI`
+-- para que el hub (UI) pueda invocar Record/Play/Stop sin acoplarse a detalles.
+--
+-- Notas:
+--  • Si ya existe `getgenv().MacroAPI`, respetamos esa instancia (evitamos doble carga).
+--  • Aceptamos distintos contratos: algunos módulos exponen `.init()`, otros no.
+--  • Logueamos capacidades detectadas (start, stop, play, load, list, onStatus, onAction…)
+
+local function ensureMacroAPI()
+  local g = getgenv and getgenv() or _G
+  if rawget(g, "MacroAPI") and type(g.MacroAPI) == "table" then
+    print("[Main] MacroAPI presente (pre-cargado)")
+    return true
+  end
+
+  local src = httpGet(MACRO_URL)
+  if not src then
+    warn("[Main][ERROR] No se pudo descargar macrosys.lua")
+    return false
+  end
+
+  local chunk, loadErr = loadstring(src)
+  if not chunk then
+    warn("[Main][ERROR] loadstring(macrosys):", loadErr)
+    return false
+  end
+
+  local okRun, mod = pcall(chunk)
+  if not okRun then
+    warn("[Main][ERROR] ejecutando macrosys.lua:", mod)
+    return false
+  end
+
+  if type(mod) ~= "table" then
+    warn("[Main][ERROR] macrosys.lua no retornó tabla MacroAPI")
+    return false
+  end
+
+  -- Publicar en el entorno global para que hub.lua pueda consumirlo.
+  g.MacroAPI = mod
+
+  -- Inicialización opcional si el módulo la provee.
+  if type(mod.init) == "function" then
+    pcall(function() mod.init() end)
+  end
+
+  -- Log de capacidades útiles para depurar
+  local caps, keys = {}, {"start","stop","record","play","load","save","list","onStatus","onAction"}
+  for _,k in ipairs(keys) do if type(mod[k]) == "function" then table.insert(caps, k) end end
+  print("[Main] macrosys.lua cargado; API:", table.concat(caps, ", "))
+
+  return true
 end
 
 -- === 3) Persistencia: Config ===
@@ -156,6 +212,11 @@ local hub
   if not okBuild then warn("[Main][ERROR] Hub.build fallo:", res) return end
   hub = res
  end
+
+-- Cargar MacroAPI antes de anunciar el Hub, para que los botones de Macro funcionen al abrir
+pcall(function()
+  ensureMacroAPI()
+end)
 
 print("[Main] Hub cargado:", hub and hub.root and hub.root.Name or "(sin root)")
 
