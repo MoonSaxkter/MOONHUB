@@ -424,20 +424,23 @@ local function isAllowedByFilter(mapName, canonCh)
             return _opts and type(_opts.getFilters) == "function" and _opts.getFilters() or nil
         end)
         if okSnap then snap = res end
+
         if type(snap) == "table" and type(snap[mapName]) == "table" then
             -- convert list to set (case-insensitive)
             local set = {}
-            for _,v in ipairs(snap[mapName]) do
+            for _, v in ipairs(snap[mapName]) do
                 if type(v) == "string" then set[v:lower()] = true end
             end
+
+            -- ⛔ Cambio: lista vacía => DENY-ALL
+            if next(set) == nil then
+                warn(string.format("[FindTB][Filter] BLOCK (opts empty -> deny-all): '%s' on '%s'", canonCh, mapName))
+                return false
+            end
+
             local allowed = set[canonCh:lower()] == true
-            if not allowed and next(set) ~= nil then
+            if not allowed then
                 warn(string.format("[FindTB][Filter] BLOCK (opts): '%s' not allowed for '%s'", canonCh, mapName))
-            else
-                if next(set) == nil then
-                    warn(string.format("[FindTB][Filter] PASS (opts empty -> allow-all): '%s' on '%s'", canonCh, mapName))
-                    return true
-                end
             end
             return allowed
         end
@@ -455,10 +458,13 @@ local function isAllowedByFilter(mapName, canonCh)
                     set[k:lower()] = true
                 end
             end
+
+            -- ⛔ Cambio: lista vacía => DENY-ALL
             if next(set) == nil then
-                warn(string.format("[FindTB][Filter] PASS (Filter empty -> allow-all): '%s' on '%s'", canonCh, mapName))
-                return true
+                warn(string.format("[FindTB][Filter] BLOCK (Filter empty -> deny-all): '%s' on '%s'", canonCh, mapName))
+                return false
             end
+
             local allowed = set[canonCh:lower()] == true
             if not allowed then
                 warn(string.format("[FindTB][Filter] BLOCK (Filter): '%s' not allowed for '%s'", canonCh, mapName))
