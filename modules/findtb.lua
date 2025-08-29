@@ -43,7 +43,7 @@ local RETRIES_PRESS    = 3
 local WAIT_BETWEEN_TRY = 0.35
 local TB_EVENT_WINDOW  = 1.3
 local CHAPTER          = 1
-local DIFFICULTY       = "Hard"
+local DIFFICULTY       = "Expert"
 
 -- ===== Estado =====
 local LAST_SELECTED = "Challenge1"
@@ -258,7 +258,7 @@ local function findExpertButton()
     local segments = {
         "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
         "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
-        "DifficultFrame","Hard","Button"
+        "DifficultFrame","Expert","Button"
     }
     local btn = descend(PG, segments, 3.0)
     if btn and btn:IsA("TextButton") then return btn end
@@ -430,6 +430,7 @@ local function scan_challenge(i)
     if expBtn then
         clickTextButton(expBtn)
         waitRewardsRefresh(1.6)
+        task.wait(0.10)
     end
 
     local typeHint = (getChallengeTypeHint() or ""):lower()
@@ -450,6 +451,7 @@ local function scan_challenge(i)
 
     local hasTB = false
     pcall(function() hasTB = hasTraitBurner_fast() end)
+    print(string.format("[FindTB] scan #%d → hasTB=%s", i, tostring(hasTB)))
 
     return {ok=true, index=i, type_hint=typeHint, challenge=canonCh, map=mapName, has_tb=hasTB}
 end
@@ -480,6 +482,7 @@ function M.start()
                     local isRandom = (hint:find("random",1,true) ~= nil)
                                    or (hint:find("everything but imagination",1,true) ~= nil)
                     if res.has_tb and not isRandom then
+                        print("[FindTB] ENTERING → TB found on", "Challenge"..i, "map=", tostring(res.map), "challenge=", tostring(res.challenge))
                         ENTERED = true
                         start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
                         task.wait(0.25)
@@ -514,6 +517,7 @@ function M.start()
                                 local isRandom = (hint:find("random",1,true) ~= nil)
                                                or (hint:find("everything but imagination",1,true) ~= nil)
                                 if res.has_tb and not isRandom then
+                                    print("[FindTB] ENTERING → TB found on", "Challenge"..i, "map=", tostring(res.map), "challenge=", tostring(res.challenge))
                                     ENTERED = true
                                     start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
                                     task.wait(0.25)
