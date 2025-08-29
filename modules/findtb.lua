@@ -37,6 +37,9 @@ do
   _ftbdbg(string.format("loaded=%s maps=%d", tostring(not not Filter), count))
 end
 
+-- Options provided by main.lua (e.g., getFilters snapshot)
+local _opts = nil
+
 -- ===== Config =====
 local UI_TIMEOUT_SEC   = 20
 local RETRIES_PRESS    = 3
@@ -355,54 +358,72 @@ local function canonicalChallengeFromHint(hint)
 end
 
 local function isAllowedByFilter(mapName, canonCh)
-    -- Fail-closed and explain why
-    if not Filter then
-        warn("[FindTB][Filter] BLOCK: Filter=nil")
-        return false
-    end
-    if (mapName == nil) or (mapName == "") then
-        warn("[FindTB][Filter] BLOCK: mapName missing")
-        return false
-    end
-    if (canonCh == nil) or (canonCh == "") then
-        warn("[FindTB][Filter] BLOCK: challenge missing for map=" .. tostring(mapName))
-        return false
+    -- Normalize inputs
+    mapName = tostring(mapName or "")
+    canonCh = tostring(canonCh or "")
+    if mapName == "" or canonCh == "" then
+        warn("[FindTB][Filter] PASS (no-check): missing map or challenge -> map='" .. mapName .. "' challenge='" .. canonCh .. "'")
+        return true
     end
 
-    if type(Filter.getAllowed) ~= "function" then
-        warn("[FindTB][Filter] BLOCK: getAllowed missing")
-        return false
-    end
-
-    local ok, t = pcall(function()
-        return Filter.getAllowed(mapName)
-    end)
-    if not ok then
-        warn("[FindTB][Filter] BLOCK: getAllowed error for map=" .. tostring(mapName))
-        return false
-    end
-
-    if type(t) ~= "table" or next(t) == nil then
-        warn("[FindTB][Filter] BLOCK: map has no allowed challenges -> " .. tostring(mapName))
-        return false
-    end
-
-    local set = {}
-    for k, v in pairs(t) do
-        if type(k) == "number" and type(v) == "string" then
-            set[string.lower(v)] = true
-        elseif type(k) == "string" and v == true then
-            set[string.lower(k)] = true
+    -- 1) Prefer live snapshot from main.lua via opts.getFilters()
+    do
+        local snap = nil
+        local okSnap, res = pcall(function()
+            return _opts and type(_opts.getFilters) == "function" and _opts.getFilters() or nil
+        end)
+        if okSnap then snap = res end
+        if type(snap) == "table" and type(snap[mapName]) == "table" then
+            -- convert list to set (case-insensitive)
+            local set = {}
+            for _,v in ipairs(snap[mapName]) do
+                if type(v) == "string" then set[v:lower()] = true end
+            end
+            local allowed = set[canonCh:lower()] == true
+            if not allowed and next(set) ~= nil then
+                warn(string.format("[FindTB][Filter] BLOCK (opts): '%s' not allowed for '%s'", canonCh, mapName))
+            else
+                if next(set) == nil then
+                    warn(string.format("[FindTB][Filter] PASS (opts empty -> allow-all): '%s' on '%s'", canonCh, mapName))
+                    return true
+                end
+            end
+            return allowed
         end
     end
 
-    local okAllowed = set[string.lower(canonCh)] == true
-    if not okAllowed then
-        warn(string.format("[FindTB][Filter] BLOCK: '%s' not allowed for map '%s'", tostring(canonCh), tostring(mapName)))
-    else
-        print(string.format("[FindTB][Filter] ALLOW: '%s' for '%s'", tostring(canonCh), tostring(mapName)))
+    -- 2) Fallback to Filter module (if present)
+    if Filter and type(Filter.getAllowed) == "function" then
+        local ok, t = pcall(function() return Filter.getAllowed(mapName) end)
+        if ok and type(t) == "table" then
+            local set = {}
+            for k, v in pairs(t) do
+                if type(k) == "number" and type(v) == "string" then
+                    set[v:lower()] = true
+                elseif type(k) == "string" and v == true then
+                    set[k:lower()] = true
+                end
+            end
+            if next(set) == nil then
+                warn(string.format("[FindTB][Filter] PASS (Filter empty -> allow-all): '%s' on '%s'", canonCh, mapName))
+                return true
+            end
+            local allowed = set[canonCh:lower()] == true
+            if not allowed then
+                warn(string.format("[FindTB][Filter] BLOCK (Filter): '%s' not allowed for '%s'", canonCh, mapName))
+            else
+                print(string.format("[FindTB][Filter] ALLOW (Filter): '%s' for '%s'", canonCh, mapName))
+            end
+            return allowed
+        else
+            warn("[FindTB][Filter] PASS (Filter.getAllowed error -> allow-all)")
+            return true
+        end
     end
-    return okAllowed
+
+    -- 3) No filter source available -> allow (test-friendly)
+    warn("[FindTB][Filter] PASS (no filter source -> allow-all)")
+    return true
 end
 
 local function clickTextButton(btn)
@@ -458,9 +479,10 @@ end
 local M = {}
 local running = false
 
-function M.start()
+function M.start(opts)
     if running then return end
     running = true
+    _opts = opts or _opts
     ENTERED = false
 
     task.spawn(function()
