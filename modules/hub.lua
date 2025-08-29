@@ -831,6 +831,85 @@ function Hub.build(player, Config)
   statusDesc.TextXAlignment = Enum.TextXAlignment.Left
   statusDesc.Parent = controlPanel
 
+  -- Helper functions for filesystem operations (placeholder)
+  local function sanitizeName(s)
+    s = tostring(s or ""):lower()
+    s = s:gsub("[^a-z0-9_]", "_")
+    s = s:gsub("_+", "_")
+    s = s:gsub("^_+", ""):gsub("_+$", "")
+    return s
+  end
+
+  local function basename(path)
+    if not path then return nil end
+    local name = path:match("([^/\\]+)$")
+    return name
+  end
+
+  local function strip_json(extname)
+    return extname and extname:gsub("%.json$", "") or extname
+  end
+
+  local function shakeFrame(f)
+    if not f or not f.Parent then return end
+    local p0 = f.Position
+    local tweenInfo = TweenInfo.new(0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    TweenService:Create(f, tweenInfo, {Position = p0 + UDim2.new(0, 6, 0, 0)}):Play()
+    task.delay(0.05, function()
+      TweenService:Create(f, tweenInfo, {Position = p0 + UDim2.new(0, -6, 0, 0)}):Play()
+    end)
+    task.delay(0.10, function()
+      TweenService:Create(f, tweenInfo, {Position = p0}):Play()
+    end)
+  end
+
+  -- Forward declarations
+  local updateStatus
+  local selectedMacroName = nil
+  local isRecording = false
+  local isPlaying = false
+  local AutoReplay = { enabled = false, task = nil }
+  local AutoSelect = { enabled = false, task = nil, lastPick = nil }
+
+  local function ensureAutoReplayLoop() end
+  local function ensureAutoSelectLoop() end  
+  local function chooseMacroForContext() return nil end
+  local function applySelectedMacro(name) end
+  local function saveConfig() end
+
+  local function refreshMacroStatusMessage()
+    if updateStatus then
+      if AutoReplay and AutoReplay.enabled then
+        updateStatus("idle", "Auto replay enabled")
+      elseif AutoSelect and AutoSelect.enabled then
+        updateStatus("idle", "Auto select macro enabled")
+      else
+        updateStatus("idle", "Ready to record")
+      end
+    end
+  end
+
+  -- Update status function
+  updateStatus = function(state, description)
+    statusText.Text = state:upper()
+    statusDesc.Text = description
+    
+    if state == "recording" then
+      statusIndicator.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+      TweenService:Create(statusPulse, TweenInfo.new(0.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+        Transparency = 0
+      }):Play()
+    elseif state == "playing" then
+      statusIndicator.BackgroundColor3 = Color3.fromRGB(60, 180, 75)
+      TweenService:Create(statusPulse, TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
+        Transparency = 0
+      }):Play()
+    else
+      statusIndicator.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
+      TweenService:Create(statusPulse, TweenInfo.new(0.2), {Transparency = 0.5}):Play()
+    end
+  end
+
   -- Macro picker dropdown
   local macroPicker = Instance.new("Frame")
   macroPicker.Name = "MacroPicker"
@@ -856,7 +935,7 @@ function Hub.build(player, Config)
 
   local selectBtn = Instance.new("TextButton")
   selectBtn.Name = "SelectMacroButton"
-  selectBtn.Text = "Choose macro ▾"
+  selectBtn.Text = "Choose macro"
   selectBtn.AutoButtonColor = false
   selectBtn.BackgroundColor3 = COLORS.background_secondary
   selectBtn.TextColor3 = Color3.new(1,1,1)
@@ -867,11 +946,35 @@ function Hub.build(player, Config)
   selectBtn.Parent = macroPicker
   selectBtn.ZIndex = 55
   createCorner(selectBtn, 8)
-  createStroke(selectBtn, COLORS.border, 1, 0.7)
+  local selectBtnStroke = createStroke(selectBtn, COLORS.border, 1, 0.7)
 
-  -- Placeholder dropdown functionality
+  -- Visual feedback when a macro is selected
+  local function flashMacroChosenFeedback()
+    local originalBg = selectBtn.BackgroundColor3
+    local originalStroke = selectBtnStroke.Color
+
+    local grow = TweenService:Create(selectBtn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+      Size = UDim2.new(1, -16, 0, 31)
+    })
+    local shrink = TweenService:Create(selectBtn, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+      Size = UDim2.new(1, -20, 0, 28)
+    })
+
+    TweenService:Create(selectBtn, TweenInfo.new(0.15), { BackgroundColor3 = COLORS.accent }):Play()
+    TweenService:Create(selectBtnStroke, TweenInfo.new(0.15), { Color = COLORS.accent }):Play()
+    grow:Play()
+
+    task.delay(0.18, function()
+      TweenService:Create(selectBtn, TweenInfo.new(0.20), { BackgroundColor3 = originalBg }):Play()
+      TweenService:Create(selectBtnStroke, TweenInfo.new(0.20), { Color = originalStroke }):Play()
+      shrink:Play()
+    end)
+  end
+
+  -- Dropdown list (simplified for placeholder)
   selectBtn.MouseButton1Click:Connect(function()
     print("Macro selector clicked")
+    flashMacroChosenFeedback()
   end)
 
   -- Button container
@@ -922,7 +1025,7 @@ function Hub.build(player, Config)
     textLabel.TextXAlignment = Enum.TextXAlignment.Left
     textLabel.Parent = button
 
-    -- Hover / press effects matching the rest of the UI
+    -- Hover / press effects
     button.MouseEnter:Connect(function()
       TweenService:Create(button, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
       TweenService:Create(stroke, TweenInfo.new(0.12), {Color = COLORS.accent}):Play()
@@ -945,18 +1048,312 @@ function Hub.build(player, Config)
   local playBtn, playIcon   = createMacroButton("▶", "Play",   Color3.fromRGB(60, 180, 75))
   local stopBtn, stopIcon   = createMacroButton("■", "Stop",   Color3.fromRGB(80, 120, 220))
 
-  -- Placeholder button functionality
-  recordBtn.MouseButton1Click:Connect(function()
-    print("Record clicked")
+  -- Recorded actions list
+  local listContainer = Instance.new("Frame")
+  listContainer.BackgroundColor3 = COLORS.background_secondary
+  listContainer.Size = UDim2.new(1, -20, 0, 180)
+  listContainer.Position = UDim2.new(0, 10, 0, 220)
+  listContainer.Parent = macroContainer
+  createCorner(listContainer, 10)
+
+  local listHeader = Instance.new("TextLabel")
+  listHeader.Text = "RECORDED ACTIONS"
+  listHeader.TextColor3 = COLORS.text_dim
+  listHeader.BackgroundTransparency = 1
+  listHeader.Font = Enum.Font.SourceSansBold
+  listHeader.TextSize = 12
+  listHeader.Size = UDim2.new(1, -20, 0, 25)
+  listHeader.Position = UDim2.new(0, 10, 0, 5)
+  listHeader.Parent = listContainer
+
+  local actionsList = Instance.new("ScrollingFrame")
+  actionsList.BackgroundColor3 = COLORS.background_primary
+  actionsList.BorderSizePixel = 0
+  actionsList.ScrollBarImageColor3 = COLORS.accent
+  actionsList.ScrollBarImageTransparency = 0.5
+  actionsList.ScrollBarThickness = 3
+  actionsList.Size = UDim2.new(1, -20, 1, -35)
+  actionsList.Position = UDim2.new(0, 10, 0, 30)
+  actionsList.CanvasSize = UDim2.new(0, 0, 0, 0)
+  actionsList.Parent = listContainer
+  createCorner(actionsList, 8)
+
+  local actionsLayout = Instance.new("UIListLayout")
+  actionsLayout.Padding = UDim.new(0, 2)
+  actionsLayout.Parent = actionsList
+
+  actionsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    actionsList.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
   end)
 
-  playBtn.MouseButton1Click:Connect(function()
-    print("Play clicked")
+  -- Create new macro input
+  local newMacroBox = Instance.new("Frame")
+  newMacroBox.Name = "NewMacroBox"
+  newMacroBox.BackgroundColor3 = COLORS.background_secondary
+  newMacroBox.Size = UDim2.new(1, -20, 0, 75)
+  newMacroBox.Position = UDim2.new(0, 10, 0, 410)
+  newMacroBox.Parent = macroContainer
+  createCorner(newMacroBox, 10)
+  createStroke(newMacroBox, COLORS.border, 1, 0.8)
+
+  local nmTitle = Instance.new("TextLabel")
+  nmTitle.Text = "Create new macro file"
+  nmTitle.TextColor3 = COLORS.text_secondary
+  nmTitle.BackgroundTransparency = 1
+  nmTitle.Font = Enum.Font.SourceSansSemibold
+  nmTitle.TextSize = 16
+  nmTitle.Size = UDim2.new(1, -20, 0, 22)
+  nmTitle.Position = UDim2.new(0, 10, 0, 8)
+  nmTitle.TextXAlignment = Enum.TextXAlignment.Left
+  nmTitle.Parent = newMacroBox
+
+  local nameInput = Instance.new("TextBox")
+  nameInput.Name = "NameInput"
+  nameInput.ClearTextOnFocus = false
+  nameInput.PlaceholderText = "new macro name"
+  nameInput.Text = ""
+  nameInput.TextColor3 = Color3.new(1,1,1)
+  nameInput.PlaceholderColor3 = COLORS.text_dim
+  nameInput.Font = Enum.Font.SourceSans
+  nameInput.TextSize = 14
+  nameInput.BackgroundColor3 = COLORS.background_primary
+  nameInput.Size = UDim2.new(1, -20, 0, 30)
+  nameInput.Position = UDim2.new(0, 10, 0, 38)
+  nameInput.Parent = newMacroBox
+  createCorner(nameInput, 8)
+  createStroke(nameInput, COLORS.border, 1, 0.7)
+
+  nameInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+      print("Create macro:", nameInput.Text)
+      updateStatus("idle", "Macro creation placeholder")
+    end
   end)
 
-  stopBtn.MouseButton1Click:Connect(function()
-    print("Stop clicked")
+  -- File action buttons
+  local fileButtonsBox = Instance.new("Frame")
+  fileButtonsBox.Name = "FileButtonsBox"
+  fileButtonsBox.BackgroundColor3 = COLORS.background_secondary
+  fileButtonsBox.Size = UDim2.new(1, -20, 0, 60)
+  fileButtonsBox.Position = UDim2.new(0, 10, 0, 490)
+  fileButtonsBox.Parent = macroContainer
+  createCorner(fileButtonsBox, 10)
+  createStroke(fileButtonsBox, COLORS.border, 1, 0.8)
+
+  local fbLayout = Instance.new("UIListLayout")
+  fbLayout.FillDirection = Enum.FillDirection.Horizontal
+  fbLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+  fbLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+  fbLayout.Padding = UDim.new(0, 12)
+  fbLayout.Parent = fileButtonsBox
+
+  local function smallActionButton(text, strokeColor, fillColor)
+    local b = Instance.new("TextButton")
+    b.Text = text
+    b.AutoButtonColor = false
+    b.BackgroundColor3 = fillColor or COLORS.background_tertiary
+    b.TextColor3 = COLORS.text_secondary
+    b.Font = Enum.Font.SourceSansSemibold
+    b.TextSize = 14
+    b.Size = UDim2.new(0, 150, 0, 36)
+    b.Parent = fileButtonsBox
+    createCorner(b, 8)
+    local stroke = createStroke(b, strokeColor or COLORS.border, 1, 0.3)
+
+    b.MouseEnter:Connect(function()
+      TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.button_hover}):Play()
+      TweenService:Create(stroke, TweenInfo.new(0.12), {Color = strokeColor or COLORS.accent}):Play()
+    end)
+    b.MouseLeave:Connect(function()
+      TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = fillColor or COLORS.background_tertiary}):Play()
+      TweenService:Create(stroke, TweenInfo.new(0.12), {Color = strokeColor or COLORS.border}):Play()
+    end)
+
+    return b
+  end
+
+  local wipeBtn = smallActionButton("Wipe macro", COLORS.accent)
+  local deleteBtn = smallActionButton("Delete macro", Color3.fromRGB(220, 90, 90))
+
+  -- Auto replay toggle
+  local autoReplayBox = Instance.new("Frame")
+  autoReplayBox.Name = "AutoReplayBox"
+  autoReplayBox.BackgroundColor3 = COLORS.background_secondary
+  autoReplayBox.Size = UDim2.new(1, -20, 0, 110)
+  autoReplayBox.Position = UDim2.new(0, 10, 0, 560)
+  autoReplayBox.Parent = macroContainer
+  createCorner(autoReplayBox, 10)
+  createStroke(autoReplayBox, COLORS.border, 1, 0.8)
+
+  local arToggleContainer = Instance.new("Frame")
+  arToggleContainer.BackgroundTransparency = 1
+  arToggleContainer.Size = UDim2.new(1, -20, 0, 40)
+  arToggleContainer.Position = UDim2.new(0, 10, 0, 10)
+  arToggleContainer.Parent = autoReplayBox
+
+  local arTitle = Instance.new("TextLabel")
+  arTitle.Text = "Auto replay"
+  arTitle.TextColor3 = COLORS.text_secondary
+  arTitle.BackgroundTransparency = 1
+  arTitle.Font = Enum.Font.SourceSansSemibold
+  arTitle.TextSize = 16
+  arTitle.Size = UDim2.new(0, 150, 1, 0)
+  arTitle.Position = UDim2.new(0, 0, 0, 0)
+  arTitle.TextXAlignment = Enum.TextXAlignment.Left
+  arTitle.Parent = arToggleContainer
+
+  local arSwitch = Instance.new("Frame")
+  arSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+  arSwitch.Size = UDim2.new(0, 50, 0, 26)
+  arSwitch.Position = UDim2.new(1, -50, 0.5, 0)
+  arSwitch.AnchorPoint = Vector2.new(1, 0.5)
+  arSwitch.Parent = arToggleContainer
+  createCorner(arSwitch, 13)
+
+  local arKnob = Instance.new("Frame")
+  arKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+  arKnob.Size = UDim2.new(0, 22, 0, 22)
+  arKnob.Position = UDim2.new(0, 2, 0.5, 0)
+  arKnob.AnchorPoint = Vector2.new(0, 0.5)
+  arKnob.Parent = arSwitch
+  createCorner(arKnob, 11)
+
+  local arDesc = Instance.new("TextLabel")
+  arDesc.Text = "With this option you can repeat the macro indefinitely until it is disabled."
+  arDesc.TextColor3 = COLORS.text_dim
+  arDesc.BackgroundTransparency = 1
+  arDesc.Font = Enum.Font.SourceSans
+  arDesc.TextSize = 13
+  arDesc.Size = UDim2.new(1, -20, 0, 40)
+  arDesc.Position = UDim2.new(0, 10, 0, 55)
+  arDesc.TextXAlignment = Enum.TextXAlignment.Left
+  arDesc.TextYAlignment = Enum.TextYAlignment.Top
+  arDesc.TextWrapped = true
+  arDesc.Parent = autoReplayBox
+
+  local function toggleAutoReplay()
+    local wantEnable = not AutoReplay.enabled
+    if wantEnable and AutoSelect and AutoSelect.enabled then
+      updateStatus("idle", "Disable Auto select macro first")
+      shakeFrame(arSwitch)
+      return
+    end
+
+    AutoReplay.enabled = wantEnable
+
+    if AutoReplay.enabled then
+      TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+        Position = UDim2.new(1, -24, 0.5, 0),
+        AnchorPoint = Vector2.new(0, 0.5)
+      }):Play()
+      TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
+    else
+      TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+        Position = UDim2.new(0, 2, 0.5, 0),
+        AnchorPoint = Vector2.new(0, 0.5)
+      }):Play()
+      TweenService:Create(arSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20,20,20)}):Play()
+    end
+
+    refreshMacroStatusMessage()
+    print("Auto replay toggled:", AutoReplay.enabled)
+  end
+
+  arSwitch.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+      toggleAutoReplay()
+    end
   end)
+
+  -- Auto select macro toggle
+  local autoSelectBox = Instance.new("Frame")
+  autoSelectBox.Name = "AutoSelectBox"
+  autoSelectBox.BackgroundColor3 = COLORS.background_secondary
+  autoSelectBox.Size = UDim2.new(1, -20, 0, 130)
+  autoSelectBox.Position = UDim2.new(0, 10, 0, 680)
+  autoSelectBox.Parent = macroContainer
+  createCorner(autoSelectBox, 10)
+  createStroke(autoSelectBox, COLORS.border, 1, 0.8)
+
+  local asToggleContainer = Instance.new("Frame")
+  asToggleContainer.BackgroundTransparency = 1
+  asToggleContainer.Size = UDim2.new(1, -20, 0, 40)
+  asToggleContainer.Position = UDim2.new(0, 10, 0, 10)
+  asToggleContainer.Parent = autoSelectBox
+
+  local asTitle = Instance.new("TextLabel")
+asTitle.Text = "Auto select macro"
+asTitle.TextColor3 = COLORS.text_secondary
+asTitle.BackgroundTransparency = 1
+asTitle.Font = Enum.Font.SourceSansSemibold
+asTitle.TextSize = 16
+asTitle.Size = UDim2.new(0, 200, 1, 0)
+asTitle.Position = UDim2.new(0, 0, 0, 0)
+asTitle.TextXAlignment = Enum.TextXAlignment.Left
+asTitle.Parent = asToggleContainer
+
+local asSwitch = Instance.new("Frame")
+asSwitch.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+asSwitch.Size = UDim2.new(0, 50, 0, 26)
+asSwitch.Position = UDim2.new(1, -50, 0.5, 0)
+asSwitch.AnchorPoint = Vector2.new(1, 0.5)
+asSwitch.Parent = asToggleContainer
+createCorner(asSwitch, 13)
+
+local asKnob = Instance.new("Frame")
+asKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+asKnob.Size = UDim2.new(0, 22, 0, 22)
+asKnob.Position = UDim2.new(0, 2, 0.5, 0)
+asKnob.AnchorPoint = Vector2.new(0, 0.5)
+asKnob.Parent = asSwitch
+createCorner(asKnob, 11)
+
+local asDesc = Instance.new("TextLabel")
+asDesc.Text = "With this option the script will choose the macro automatically depending on the map and the challenge *Do not enable Auto replay while this is active*."
+asDesc.TextColor3 = COLORS.text_dim
+asDesc.BackgroundTransparency = 1
+asDesc.Font = Enum.Font.SourceSans
+asDesc.TextSize = 13
+asDesc.Size = UDim2.new(1, -20, 0, 60)
+asDesc.Position = UDim2.new(0, 10, 0, 55)
+asDesc.TextXAlignment = Enum.TextXAlignment.Left
+asDesc.TextYAlignment = Enum.TextYAlignment.Top
+asDesc.TextWrapped = true
+asDesc.Parent = autoSelectBox
+
+local function toggleAutoSelect()
+  local wantEnable = not AutoSelect.enabled
+  if wantEnable and AutoReplay and AutoReplay.enabled then
+    updateStatus("idle", "Disable Auto replay first")
+    shakeFrame(asSwitch)
+    return
+  end
+
+  AutoSelect.enabled = wantEnable
+
+  if AutoSelect.enabled then
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(1, -24, 0.5, 0),
+      AnchorPoint = Vector2.new(0, 0.5)
+    }):Play()
+    TweenService:Create(asSwitch, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.accent}):Play()
+  else
+    TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+      Position = UDim2.new(0, 2, 0.5, 0),
+      AnchorPoint = Vector2.new(0, 0.5)
+    }):Play()
+    TweenService:Create(asSwitch, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20,20,20)}):Play()
+  end
+
+  refreshMacroStatusMessage()
+  print("Auto select toggled:", AutoSelect.enabled)
+end
+
+asSwitch.InputBegan:Connect(function(input)
+  if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    toggleAutoSelect()
+  end
+end)
 
   -- Update canvas size for macro container
   local function recomputeCanvas()
