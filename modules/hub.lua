@@ -1005,6 +1005,9 @@ function Hub.build(player, Config)
   local AutoReplay = { enabled = false, task = nil }
   local AutoSelect = { enabled = false, task = nil, lastPick = nil }
 
+  -- MacroAPI lookup (from macrosys.lua, if loaded)
+  local MacroAPI = rawget(getgenv() or _G, "MacroAPI")
+
   local function ensureAutoReplayLoop() end
   local function ensureAutoSelectLoop() end  
   local function chooseMacroForContext() return nil end
@@ -1104,11 +1107,59 @@ function Hub.build(player, Config)
     end)
   end
 
-  -- Dropdown list (simplified for placeholder)
+  -- Minimal picker: query MacroAPI.list() and pick from the console for now
   selectBtn.MouseButton1Click:Connect(function()
-    print("Macro selector clicked")
     flashMacroChosenFeedback()
+    if not MacroAPI or type(MacroAPI.list) ~= "function" then
+      updateStatus("idle", "Macro system not loaded")
+      shakeFrame(selectBtn)
+      return
+    end
+    local ok, files = pcall(MacroAPI.list)
+    if not ok or typeof(files) ~= "table" or #files == 0 then
+      updateStatus("idle", "No macro files found")
+      shakeFrame(selectBtn)
+      return
+    end
+
+    -- For now, just cycle through available files on each click
+    local idx = 1
+    if selectedMacroName then
+      for i, v in ipairs(files) do
+        if tostring(v) == tostring(selectedMacroName) then
+          idx = i % #files + 1
+          break
+        end
+      end
+    end
+
+    selectedMacroName = tostring(files[idx])
+    selectBtn.Text = selectedMacroName
+    updateStatus("idle", "Selected macro: " .. selectedMacroName)
+
+    if type(MacroAPI.select) == "function" then
+      pcall(MacroAPI.select, selectedMacroName)
+    end
   end)
+  -- Helpers to render recorded actions
+  local function clearActionsList()
+    for _, child in ipairs(actionsList:GetChildren()) do
+      if child:IsA("GuiObject") and child ~= actionsLayout then
+        child:Destroy()
+      end
+    end
+  end
+
+  local function pushActionRow(text)
+    local row = Instance.new("TextLabel")
+    row.BackgroundTransparency = 1
+    row.Text = tostring(text or "(event)")
+    row.Font = Enum.Font.SourceSans
+    row.TextSize = 14
+    row.TextColor3 = COLORS.text_primary
+    row.Size = UDim2.new(1, -8, 0, 20)
+    row.Parent = actionsList
+  end
 
   -- Button container
   local buttonContainer = Instance.new("Frame")
@@ -1180,6 +1231,74 @@ function Hub.build(player, Config)
   local recordBtn, recordIcon = createMacroButton("●", "Record", Color3.fromRGB(220, 60, 60))
   local playBtn, playIcon   = createMacroButton("▶", "Play",   Color3.fromRGB(60, 180, 75))
   local stopBtn, stopIcon   = createMacroButton("■", "Stop",   Color3.fromRGB(80, 120, 220))
+
+  -- Wire macro buttons to MacroAPI
+  local function setButtonEnabled(btn, enabled)
+    btn.AutoButtonColor = enabled and true or false
+    btn.Active = enabled and true or false
+    btn.BackgroundTransparency = enabled and 0 or 0.3
+  end
+
+  -- Disable Play for now (replayer not implemented yet)
+  setButtonEnabled(playBtn, false)
+  playBtn.MouseButton1Click:Connect(function()
+    updateStatus("idle", "Replayer not implemented yet")
+    shakeFrame(playBtn)
+  end)
+
+  recordBtn.MouseButton1Click:Connect(function()
+    if not MacroAPI or type(MacroAPI.start) ~= "function" then
+      updateStatus("idle", "Macro system not loaded")
+      shakeFrame(recordBtn)
+      return
+    end
+    if isRecording then return end
+    isRecording = true
+    clearActionsList()
+    pcall(MacroAPI.start)
+    updateStatus("recording", "Recording…")
+    setButtonEnabled(recordBtn, false)
+    setButtonEnabled(stopBtn, true)
+  end)
+
+  stopBtn.MouseButton1Click:Connect(function()
+    if not MacroAPI or type(MacroAPI.stop) ~= "function" then
+      updateStatus("idle", "Macro system not loaded")
+      shakeFrame(stopBtn)
+      return
+    end
+    if not isRecording then return end
+    isRecording = false
+    pcall(MacroAPI.stop)
+    updateStatus("idle", "Recording stopped")
+    setButtonEnabled(recordBtn, true)
+    setButtonEnabled(stopBtn, true)
+
+    -- Optionally pull the recorded summary list if available
+    if type(MacroAPI.getActions) == "function" then
+      local ok, list = pcall(MacroAPI.getActions)
+      if ok and typeof(list) == "table" then
+        for _, entry in ipairs(list) do
+          pushActionRow(entry and (entry.summary or entry.name or tostring(entry)) )
+        end
+      end
+    end
+  end)
+
+  -- Optional: subscribe to live status/events from MacroAPI
+  if MacroAPI then
+    if type(MacroAPI.onStatus) == "function" then
+      pcall(MacroAPI.onStatus, function(state, desc)
+        updateStatus(tostring(state or "idle"), tostring(desc or ""))
+      end)
+    end
+    if type(MacroAPI.onAction) == "function" then
+      pcall(MacroAPI.onAction, function(evt)
+        local line = typeof(evt) == "table" and (evt.summary or evt.name) or tostring(evt)
+        pushActionRow(line)
+      end)
+    end
+  end
 
   -- Recorded actions list
   local listContainer = Instance.new("Frame")
@@ -1307,6 +1426,50 @@ function Hub.build(player, Config)
 
   local wipeBtn = smallActionButton("Wipe macro", COLORS.accent)
   local deleteBtn = smallActionButton("Delete macro", Color3.fromRGB(220, 90, 90))
+
+  wipeBtn.MouseButton1Click:Connect(function()
+    if not selectedMacroName then
+      updateStatus("idle", "Select a macro first")
+      shakeFrame(wipeBtn)
+      return
+    end
+    if not MacroAPI or type(MacroAPI.wipe) ~= "function" then
+      updateStatus("idle", "Macro system not loaded")
+      shakeFrame(wipeBtn)
+      return
+    end
+    local ok, err = pcall(MacroAPI.wipe, selectedMacroName)
+    if ok then
+      clearActionsList()
+      updateStatus("idle", "Wiped: " .. selectedMacroName)
+    else
+      updateStatus("idle", "Wipe failed")
+      warn("[Hub][Macro] wipe error:", err)
+    end
+  end)
+
+  deleteBtn.MouseButton1Click:Connect(function()
+    if not selectedMacroName then
+      updateStatus("idle", "Select a macro first")
+      shakeFrame(deleteBtn)
+      return
+    end
+    if not MacroAPI or type(MacroAPI.delete) ~= "function" then
+      updateStatus("idle", "Macro system not loaded")
+      shakeFrame(deleteBtn)
+      return
+    end
+    local ok, err = pcall(MacroAPI.delete, selectedMacroName)
+    if ok then
+      clearActionsList()
+      updateStatus("idle", "Deleted: " .. selectedMacroName)
+      selectedMacroName = nil
+      selectBtn.Text = "Choose macro"
+    else
+      updateStatus("idle", "Delete failed")
+      warn("[Hub][Macro] delete error:", err)
+    end
+  end)
 
   -- Auto replay toggle
   local autoReplayBox = Instance.new("Frame")
@@ -1632,6 +1795,9 @@ Notes:
     local FilterMod = rawget(getgenv() or _G, "MoonFilter")
     if FilterMod and type(FilterMod.replaceAll) == "function" then
       pcall(FilterMod.replaceAll, buildFilterSnapshot())
+    end
+    if not MacroAPI then
+      print("[Hub][Macro] MacroAPI not found; UI will show placeholders until macrosys.lua is loaded.")
     end
   end)
 
