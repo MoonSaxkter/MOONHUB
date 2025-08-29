@@ -1006,7 +1006,9 @@ function Hub.build(player, Config)
   local AutoSelect = { enabled = false, task = nil, lastPick = nil }
 
   -- MacroAPI lookup (from macrosys.lua, if loaded)
-  local MacroAPI = rawget(getgenv() or _G, "MacroAPI")
+  local function getMacroAPI()
+  return rawget(getgenv() or _G, "MacroAPI")
+end
 
   local function ensureAutoReplayLoop() end
   local function ensureAutoSelectLoop() end  
@@ -1109,12 +1111,13 @@ function Hub.build(player, Config)
 
   -- Minimal picker: query MacroAPI.list() and pick from the console for now
   selectBtn.MouseButton1Click:Connect(function()
-    flashMacroChosenFeedback()
-    if not MacroAPI or type(MacroAPI.list) ~= "function" then
-      updateStatus("idle", "Macro system not loaded")
-      shakeFrame(selectBtn)
-      return
-    end
+  flashMacroChosenFeedback()
+  local MacroAPI = getMacroAPI()
+  if not MacroAPI or type(MacroAPI.list) ~= "function" then
+    updateStatus("idle", "Macro system not loaded")
+    shakeFrame(selectBtn)
+    return
+  end
     local ok, files = pcall(MacroAPI.list)
     if not ok or typeof(files) ~= "table" or #files == 0 then
       updateStatus("idle", "No macro files found")
@@ -1141,25 +1144,60 @@ function Hub.build(player, Config)
       pcall(MacroAPI.select, selectedMacroName)
     end
   end)
-  -- Helpers to render recorded actions
-  local function clearActionsList()
-    for _, child in ipairs(actionsList:GetChildren()) do
-      if child:IsA("GuiObject") and child ~= actionsLayout then
-        child:Destroy()
-      end
+  -- Helpers to render recorded actions (nil-safe; resolve list by name if needed)
+local function _getActionsList()
+  if actionsList and actionsList.Parent then
+    return actionsList
+  end
+  local root = macroPage or macroContainer or contentPanel
+  if root and root.FindFirstChild then
+    local found = root:FindFirstChild("RecordedActionsList", true)
+    if found and found:IsA("ScrollingFrame") then
+      return found
     end
   end
+  return nil
+end
 
-  local function pushActionRow(text)
-    local row = Instance.new("TextLabel")
-    row.BackgroundTransparency = 1
-    row.Text = tostring(text or "(event)")
-    row.Font = Enum.Font.SourceSans
-    row.TextSize = 14
-    row.TextColor3 = COLORS.text_primary
-    row.Size = UDim2.new(1, -8, 0, 20)
-    row.Parent = actionsList
+local function clearActionsList()
+  local list = _getActionsList()
+  if not list then return end
+  for _, child in ipairs(list:GetChildren()) do
+    if child:IsA("TextLabel") then
+      child:Destroy()
+    end
   end
+  if actionsLayout and actionsLayout.AbsoluteContentSize then
+    list.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
+  else
+    list.CanvasSize = UDim2.new(0, 0, 0, 0)
+  end
+end
+
+local function pushActionRow(text)
+  local list = _getActionsList()
+  if not list then return end
+  local row = Instance.new("TextLabel")
+  row.BackgroundTransparency = 1
+  row.Text = tostring(text or "(event)")
+  row.Font = Enum.Font.SourceSans
+  row.TextSize = 14
+  row.TextColor3 = COLORS.text_primary
+  row.TextXAlignment = Enum.TextXAlignment.Left
+  row.Size = UDim2.new(1, -8, 0, 20)
+  row.Parent = list
+
+  if actionsLayout and actionsLayout.AbsoluteContentSize then
+    list.CanvasSize = UDim2.new(0, 0, 0, actionsLayout.AbsoluteContentSize.Y)
+  end
+
+  task.defer(function()
+    if list and list.AbsoluteSize then
+      local y = math.max(0, list.AbsoluteCanvasSize.Y - list.AbsoluteSize.Y)
+      list.CanvasPosition = Vector2.new(0, y)
+    end
+  end)
+end
 
   -- Button container
   local buttonContainer = Instance.new("Frame")
@@ -1247,11 +1285,12 @@ function Hub.build(player, Config)
   end)
 
   recordBtn.MouseButton1Click:Connect(function()
-    if not MacroAPI or type(MacroAPI.start) ~= "function" then
-      updateStatus("idle", "Macro system not loaded")
-      shakeFrame(recordBtn)
-      return
-    end
+  local MacroAPI = getMacroAPI()
+  if not MacroAPI or type(MacroAPI.start) ~= "function" then
+    updateStatus("idle", "Macro system not loaded")
+    shakeFrame(recordBtn)
+    return
+  end
     if isRecording then return end
     isRecording = true
     clearActionsList()
@@ -1262,11 +1301,12 @@ function Hub.build(player, Config)
   end)
 
   stopBtn.MouseButton1Click:Connect(function()
-    if not MacroAPI or type(MacroAPI.stop) ~= "function" then
-      updateStatus("idle", "Macro system not loaded")
-      shakeFrame(stopBtn)
-      return
-    end
+  local MacroAPI = getMacroAPI()
+  if not MacroAPI or type(MacroAPI.stop) ~= "function" then
+    updateStatus("idle", "Macro system not loaded")
+    shakeFrame(stopBtn)
+    return
+  end
     if not isRecording then return end
     isRecording = false
     pcall(MacroAPI.stop)
@@ -1286,17 +1326,20 @@ function Hub.build(player, Config)
   end)
 
   -- Optional: subscribe to live status/events from MacroAPI
-  if MacroAPI then
-    if type(MacroAPI.onStatus) == "function" then
-      pcall(MacroAPI.onStatus, function(state, desc)
-        updateStatus(tostring(state or "idle"), tostring(desc or ""))
-      end)
-    end
-    if type(MacroAPI.onAction) == "function" then
-      pcall(MacroAPI.onAction, function(evt)
-        local line = typeof(evt) == "table" and (evt.summary or evt.name) or tostring(evt)
-        pushActionRow(line)
-      end)
+  do
+    local MacroAPI = getMacroAPI()
+    if MacroAPI then
+      if type(MacroAPI.onStatus) == "function" then
+        pcall(MacroAPI.onStatus, function(state, desc)
+          updateStatus(tostring(state or "idle"), tostring(desc or ""))
+        end)
+      end
+      if type(MacroAPI.onAction) == "function" then
+        pcall(MacroAPI.onAction, function(evt)
+          local line = typeof(evt) == "table" and (evt.summary or evt.name) or tostring(evt)
+          pushActionRow(line)
+        end)
+      end
     end
   end
 
@@ -1319,6 +1362,7 @@ function Hub.build(player, Config)
   listHeader.Parent = listContainer
 
   local actionsList = Instance.new("ScrollingFrame")
+  actionsList.Name = "RecordedActionsList"
   actionsList.BackgroundColor3 = COLORS.background_primary
   actionsList.BorderSizePixel = 0
   actionsList.ScrollBarImageColor3 = COLORS.accent
@@ -1433,6 +1477,7 @@ function Hub.build(player, Config)
       shakeFrame(wipeBtn)
       return
     end
+    local MacroAPI = getMacroAPI()
     if not MacroAPI or type(MacroAPI.wipe) ~= "function" then
       updateStatus("idle", "Macro system not loaded")
       shakeFrame(wipeBtn)
@@ -1454,6 +1499,7 @@ function Hub.build(player, Config)
       shakeFrame(deleteBtn)
       return
     end
+    local MacroAPI = getMacroAPI()
     if not MacroAPI or type(MacroAPI.delete) ~= "function" then
       updateStatus("idle", "Macro system not loaded")
       shakeFrame(deleteBtn)
@@ -1796,7 +1842,7 @@ Notes:
     if FilterMod and type(FilterMod.replaceAll) == "function" then
       pcall(FilterMod.replaceAll, buildFilterSnapshot())
     end
-    if not MacroAPI then
+    if not getMacroAPI() then
       print("[Hub][Macro] MacroAPI not found; UI will show placeholders until macrosys.lua is loaded.")
     end
   end)
