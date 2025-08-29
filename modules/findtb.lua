@@ -40,6 +40,7 @@ end
 -- Options provided by main.lua (e.g., getFilters snapshot)
 local _opts = nil
 
+-- ===== Config =====
 local UI_TIMEOUT_SEC   = 20
 local RETRIES_PRESS    = 3
 local WAIT_BETWEEN_TRY = 0.35
@@ -47,13 +48,9 @@ local TB_EVENT_WINDOW  = 1.3
 local CHAPTER          = 1
 local DIFFICULTY       = "Hard"
 
-
--- ===================== MODULE API (controlled by UI) ============================
-local M = { state = { LAST_SELECTED = "Challenge1" } }
-local running = false
-local _opts = nil
+-- ===== Estado =====
 local LAST_SELECTED = "Challenge1"
-local ENTERED = false
+local ENTERED       = false
 
 -- ------------------------------------------------------------
 -- Util: descender por ruta con espera
@@ -261,15 +258,6 @@ local function waitRewardsRefresh(timeout)
 end
 
 local function findExpertButton()
-    -- Try to find the "Expert" button by path first
-    local segmentsExpert = {
-      "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
-      "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
-      "DifficultFrame","Expert","Button"
-    }
-    local btnE = descend(PG, segmentsExpert, 1.0)
-    if btnE and btnE:IsA("TextButton") then return btnE end
-    -- Fallback to "Hard" button path
     local segments = {
         "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
         "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
@@ -487,6 +475,10 @@ local function scan_challenge(i)
     return {ok=true, index=i, type_hint=typeHint, challenge=canonCh, map=mapName, has_tb=hasTB}
 end
 
+-- ===================== MODULE API (controlled by UI) ============================
+local M = {}
+local running = false
+
 function M.start(opts)
     if running then return end
     running = true
@@ -568,5 +560,7 @@ function M.stop()
     ENTERED = true -- forza la salida de los bucles activos
     print("[FindTB] stopped by UI toggle")
 end
+
+M.state = { LAST_SELECTED = LAST_SELECTED }
 
 return M
