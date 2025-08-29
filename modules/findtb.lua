@@ -43,7 +43,7 @@ local RETRIES_PRESS    = 3
 local WAIT_BETWEEN_TRY = 0.35
 local TB_EVENT_WINDOW  = 1.3
 local CHAPTER          = 1
-local DIFFICULTY       = "Expert"
+local DIFFICULTY       = "Hard"
 
 -- ===== Estado =====
 local LAST_SELECTED = "Challenge1"
@@ -132,7 +132,6 @@ end
 -- ------------------------------------------------------------
 -- TP al Pod de Challenges
 -- ------------------------------------------------------------
-
 local function tpToChallengePod()
     local obj = workspace:FindFirstChild("Map")
               and workspace.Map:FindFirstChild("Buildings")
@@ -152,42 +151,6 @@ local function tpToChallengePod()
         RF:InvokeServer({ Type = "Lobby", Object = obj, Mode = "Pod" })
     end)
     return ok
-end
-
--- ------------------------------------------------------------
--- UI readiness helpers (open Challenges tab + wait StageScroll)
--- ------------------------------------------------------------
-local function tryOpenChallengesTab()
-    -- Some UIs require explicitly opening the "Challenges" panel/tab
-    -- We scan the visible UI for a button whose Text/Name mentions "Challenge"
-    local root = descend(PG, {"MainUI","WorldFrame"}, 4.0) or PG
-    if not root then return false end
-    local clicked = false
-    for _,n in ipairs(root:GetDescendants()) do
-        if n:IsA("TextButton") or n:IsA("ImageButton") then
-            local t = tostring(n.Text or n.Name or ""):lower()
-            if t:find("challenge", 1, true) then
-                pcall(function() robustClick(n) end)
-                clicked = true
-                break
-            end
-        end
-    end
-    return clicked
-end
-
-local function awaitStageScroll(timeout)
-    timeout = timeout or 10
-    local t0 = tick()
-    local scroll
-    repeat
-        scroll = findStageScroll()
-        if scroll and scroll:FindFirstChild("Challenge1") then
-            return scroll
-        end
-        Run.RenderStepped:Wait()
-    until (tick() - t0) > timeout
-    return scroll -- may be nil; caller will handle
 end
 
 
@@ -292,24 +255,22 @@ local function waitRewardsRefresh(timeout)
 end
 
 local function findExpertButton()
-    -- Prefer any visible/active button that mentions "Expert"
-    local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame"}, 2.0) or PG
+    local segments = {
+        "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
+        "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
+        "DifficultFrame","Hard","Button"
+    }
+    local btn = descend(PG, segments, 3.0)
+    if btn and btn:IsA("TextButton") then return btn end
+    local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 2.0)
     if rr then
         for _,n in ipairs(rr:GetDescendants()) do
             if n:IsA("TextButton") then
-                local t = tostring(n.Text or n.Name or ""):lower()
+                local t = (n.Text or n.Name or ""):lower()
                 if t:find("expert",1,true) then return n end
             end
         end
     end
-    -- Fallback to the old fixed path
-    local segments = {
-        "MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame","InfoFrame",
-        "InfoInner","BoxFrame","InfoFrame2","InnerFrame","RecordFrame","RecordInfo",
-        "DifficultFrame","Expert","Button"
-    }
-    local btn = descend(PG, segments, 3.0)
-    if btn and btn:IsA("TextButton") then return btn end
     return nil
 end
 
@@ -467,10 +428,8 @@ local function scan_challenge(i)
 
     local expBtn = findExpertButton()
     if expBtn then
-        print("[FindTB] Clicking EXPERT for Challenge"..i)
         clickTextButton(expBtn)
         waitRewardsRefresh(1.6)
-        task.wait(0.10)
     end
 
     local typeHint = (getChallengeTypeHint() or ""):lower()
@@ -491,7 +450,6 @@ local function scan_challenge(i)
 
     local hasTB = false
     pcall(function() hasTB = hasTraitBurner_fast() end)
-    print(string.format("[FindTB] scan #%d → hasTB=%s", i, tostring(hasTB)))
 
     return {ok=true, index=i, type_hint=typeHint, challenge=canonCh, map=mapName, has_tb=hasTB}
 end
@@ -509,14 +467,6 @@ function M.start()
         tpToChallengePod()
         descend(PG, {"MainUI","WorldFrame"}, 6.0)
 
-        -- Ensure the Challenges panel is actually open and its list is ready
-        local opened = tryOpenChallengesTab()
-        if opened then task.wait(0.25) end
-        local scroll = awaitStageScroll(10)
-        if not scroll then
-            warn("[FindTB] StageScroll not found/ready; will keep retrying in auto-rescan loop")
-        end
-
         local FOUND = false
         for i=1,4 do
             if not running or ENTERED then break end
@@ -530,7 +480,6 @@ function M.start()
                     local isRandom = (hint:find("random",1,true) ~= nil)
                                    or (hint:find("everything but imagination",1,true) ~= nil)
                     if res.has_tb and not isRandom then
-                        print("[FindTB] ENTERING → TB found on", "Challenge"..i, "map=", tostring(res.map), "challenge=", tostring(res.challenge))
                         ENTERED = true
                         start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
                         task.wait(0.25)
@@ -553,11 +502,6 @@ function M.start()
                 for _=1,MAX_ROUNDS do
                     if not running or ENTERED then break end
                     local found = false
-
-                    -- Keep UI fresh each round
-                    tryOpenChallengesTab()
-                    awaitStageScroll(4)
-
                     for i=1,4 do
                         if not running or ENTERED then break end
                         local res = scan_challenge(i)
@@ -570,7 +514,6 @@ function M.start()
                                 local isRandom = (hint:find("random",1,true) ~= nil)
                                                or (hint:find("everything but imagination",1,true) ~= nil)
                                 if res.has_tb and not isRandom then
-                                    print("[FindTB] ENTERING → TB found on", "Challenge"..i, "map=", tostring(res.map), "challenge=", tostring(res.challenge))
                                     ENTERED = true
                                     start_challenge_via_remote("Challenge"..i, CHAPTER, DIFFICULTY)
                                     task.wait(0.25)
