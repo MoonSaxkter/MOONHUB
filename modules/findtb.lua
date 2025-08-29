@@ -49,27 +49,58 @@ local TB_EVENT_WINDOW  = 1.3
 local CHAPTER          = 1
 local DIFFICULTY       = "Hard"
 
--- === Forward declarations for functions used before their definitions ===
 local findStageScroll   -- defined later
 local descend           -- defined later
 local tpToChallengePod  -- defined later
 
+-- Helpers readiness (avoid calling nil before assignments are executed)
+local function _helpersReady()
+    return type(findStageScroll) == "function"
+       and type(descend)        == "function"
+       and type(tpToChallengePod) == "function"
+end
+
+local function _awaitHelpers(timeout)
+    local t0 = tick()
+    timeout = timeout or 2.0
+    while not _helpersReady() and (tick() - t0) < timeout do
+        Run.RenderStepped:Wait()
+    end
+    return _helpersReady()
+end
+
 -- Espera a que el UI de Challenges esté realmente listo
 local function waitForChallengeUI(totalTimeout)
     totalTimeout = totalTimeout or 12
+
+    -- Ensure our helper functions are assigned before we try to call them
+    if not _awaitHelpers(3.0) then
+        warn("[FindTB] Helpers not ready (findStageScroll/descend/tpToChallengePod)")
+        return false
+    end
+
     local t0 = tick()
     local attempts = 0
     while tick() - t0 < totalTimeout do
-        local s = findStageScroll()
-        local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 1.0)
-        if s and rr then
-            return true
+        -- Safely obtain references in case something hot-reloads
+        local _find = findStageScroll
+        local _desc = descend
+
+        if type(_find) == "function" and type(_desc) == "function" then
+            local s = _find()
+            local rr = _desc(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 1.0)
+            if s and rr then
+                return true
+            end
         end
+
         Run.RenderStepped:Wait()
-        -- Reintenta reabrir el Pod si tarda demasiado en aparecer
+        -- Retry opening the Pod if it takes too long to appear
         if (tick() - t0) > (3 + attempts * 3) then
             attempts += 1
-            tpToChallengePod()
+            if type(tpToChallengePod) == "function" then
+                tpToChallengePod()
+            end
         end
     end
     return false
