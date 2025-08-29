@@ -637,15 +637,20 @@ function Hub.build(player, Config)
     btn.ZIndex = 11
 
     -- Popup lives inside the row so it scrolls/clips with the list
-    local popup = Instance.new("Frame")
+    -- Use a ScrollingFrame so we never clip the last options
+    local popup = Instance.new("ScrollingFrame")
     popup.Name = "Popup"
     popup.BackgroundColor3 = COLORS.background_secondary
     popup.Visible = false
     popup.Parent = row
     popup.ZIndex = 10
     popup.ClipsDescendants = true
+    popup.ScrollBarThickness = 5
+    popup.ScrollBarImageColor3 = COLORS.accent
+    popup.BorderSizePixel = 0
     popup.Position = UDim2.new(0, 8, 0, 22 + 6 + 42 + 6)
-    popup.Size = UDim2.new(1, -16, 0, 120)
+    -- 5 items * 26 + 4 gaps * 6 + top pad 6 ≈ 160
+    popup.Size = UDim2.new(1, -16, 0, 160)
     createCorner(popup, 8)
     createStroke(popup, COLORS.border, 1, 0.6)
 
@@ -658,6 +663,11 @@ function Hub.build(player, Config)
     popList.SortOrder = Enum.SortOrder.LayoutOrder
     popList.Padding = UDim.new(0, 6)
     popList.Parent = popup
+
+    -- Keep the scroll canvas in sync with content height
+    popList:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+      popup.CanvasSize = UDim2.new(0, 0, 0, popList.AbsoluteContentSize.Y + 12)
+    end)
 
     -- Expanded size when popup open
     local baseRowH = 72
