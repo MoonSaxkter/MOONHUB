@@ -1,5 +1,47 @@
--- hub.lua - Módulo completo de UI para MoonHub
--- Compatible con main.lua loader
+
+--[[
+  MoonHub UI (hub.lua) — Public API & Wiring Guide
+  -------------------------------------------------
+  RESPONSABILIDAD: Este módulo SOLO construye y administra la UI. No contiene
+  lógica de juego. Para conectar características (p. ej. findtb.lua), usa los
+  eventos expuestos y/o los getters de estado.
+
+  ► Eventos (UI → lógica externa)
+    - events.findTBChanged : RBXScriptSignal(boolean isOn)
+      Se dispara cuando el usuario cambia el toggle "Find Trait Burner"
+      (o cuando alguien llama a hub.toggles.findTB.set()).
+
+  ► Toggles expuestos (lógica externa → UI)
+    - toggles.findTB.active() -> bool
+    - toggles.findTB.set(bool) -> actualiza UI, persiste y emite evento
+
+  ► Filtros de desafíos seleccionados desde la UI
+    - hub.filterSelections : tabla de solo-lectura (por mapa → desafíos marcados)
+
+  ► Ejemplo de cableado (main.lua)
+
+      local Hub = require(path.modules.hub)
+      local FindTB = require(path.modules.findtb)
+
+      local hub = Hub.build(Players.LocalPlayer, { })
+
+      -- 1) Escuchar los cambios del toggle desde la UI
+      hub.events.findTBChanged:Connect(function(isOn)
+        if isOn then
+          FindTB.enable({
+            getFilters = function() return hub.filterSelections end
+          })
+        else
+          FindTB.disable()
+        end
+      end)
+
+      -- 2) Opcional: forzar estado desde la lógica
+      -- hub.toggles.findTB.set(true) -- sincroniza UI + emite evento
+
+  NOTA: Mantener este archivo libre de lógica de negocio ayuda a evitar
+  acoplamiento y hace más fácil testear los módulos de features.
+]]
 
 local Hub = {}
 
@@ -720,6 +762,11 @@ function Hub.build(player, Config)
   -- Toggle State Variable
   local isTBActive = false
 
+  -- === Eventos de salida (UI -> lógica externa) ===
+  -- Se emite SIEMPRE que cambie el estado del toggle FindTB, ya sea por
+  -- interacción del usuario o por llamada programática a toggles.findTB.set().
+  local findTBChanged = Instance.new("BindableEvent")
+
   -- Helpers para el toggle de FindTB
   local function setTBVisual(on, tween)
     if on then
@@ -738,6 +785,8 @@ function Hub.build(player, Config)
   local function toggleTB()
     isTBActive = not isTBActive
     setTBVisual(isTBActive, true)
+    -- Notificar a consumidores externos (main.lua / findtb.lua)
+    findTBChanged:Fire(isTBActive)
 
     -- Persist toggle
     Config.data.toggles.findTB = isTBActive
@@ -1738,6 +1787,13 @@ Notes:
     mainFrame = mainFrame,
     pages = pages,
     
+    -- Señales públicas (UI → lógica). Úsalas para conectar módulos externos
+    -- sin meter lógica de juego dentro del hub.
+    events = {
+      -- Señal que emite el estado del toggle FindTB (true/false)
+      findTBChanged = findTBChanged.Event,
+    },
+    
     -- API para expandir funcionalidad
     addFeature = function(featureUI)
       if featureUI and featuresPage then
@@ -1760,6 +1816,8 @@ Notes:
           setTBVisual(isTBActive)
           Config.data.toggles.findTB = isTBActive
           saveConfig()
+          -- Emitir evento para mantener sincronizada la lógica externa
+          findTBChanged:Fire(isTBActive)
         end
       },
       autoReplay = {
