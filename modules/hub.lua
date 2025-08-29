@@ -44,6 +44,17 @@ function Hub.build(player, Config)
   local isDragging = false
   local currentTab = "Features"
 
+  -- === Config helpers (persist in-memory or via provided Config.save) ===
+  Config = typeof(Config) == "table" and Config or {}
+  Config.data = typeof(Config.data) == "table" and Config.data or {toggles={}, filters={}}
+  Config.data.toggles = Config.data.toggles or { findTB=false, autoReplay=false, autoSelect=false }
+  Config.data.filters = Config.data.filters or {}
+  local function saveConfig()
+    if Config and typeof(Config.save) == "function" then
+      pcall(function() Config.save(Config.data) end)
+    end
+  end
+
   -- ===== FUNCIONES UTILITARIAS =====
   local function formatNumber(n)
     local s = tostring(n or 0)
@@ -652,6 +663,13 @@ function Hub.build(player, Config)
         FilterSelections[map.label][opt.label] = not cur and true or nil
         btn.Text = summarizeSelection(FilterSelections[map.label]) .. " ▾"
         refresh()
+        -- Persist selection to Config.data.filters[map.label]
+        local list = {}
+        for lbl, on in pairs(FilterSelections[map.label]) do
+          if on then table.insert(list, lbl) end
+        end
+        Config.data.filters[map.label] = list
+        saveConfig()
         closePopup()
       end)
 
@@ -720,8 +738,21 @@ function Hub.build(player, Config)
   local function toggleTB()
     isTBActive = not isTBActive
     setTBVisual(isTBActive, true)
-    -- Placeholder for functionality
-    print("Find TB toggled:", isTBActive)
+
+    -- Persist toggle
+    Config.data.toggles.findTB = isTBActive
+    saveConfig()
+
+    -- Notify external finder (kept outside hub to stay ordered)
+    local ok = pcall(function()
+      if getgenv and getgenv().FindTB and typeof(getgenv().FindTB) == "table" then
+        if isTBActive and typeof(getgenv().FindTB.start) == "function" then getgenv().FindTB.start() end
+        if (not isTBActive) and typeof(getgenv().FindTB.stop) == "function" then getgenv().FindTB.stop() end
+      else
+        _G.FindTBActive = isTBActive
+      end
+    end)
+    if not ok then _G.FindTBActive = isTBActive end
   end
 
   toggleSwitch.InputBegan:Connect(function(input)
@@ -1241,6 +1272,9 @@ function Hub.build(player, Config)
 
     AutoReplay.enabled = wantEnable
 
+    Config.data.toggles.autoReplay = AutoReplay.enabled
+    saveConfig()
+
     if AutoReplay.enabled then
       TweenService:Create(arKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
         Position = UDim2.new(1, -24, 0.5, 0),
@@ -1330,6 +1364,8 @@ local function toggleAutoSelect()
   end
 
   AutoSelect.enabled = wantEnable
+  Config.data.toggles.autoSelect = AutoSelect.enabled
+  saveConfig()
 
   if AutoSelect.enabled then
     TweenService:Create(asKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
@@ -1355,21 +1391,142 @@ asSwitch.InputBegan:Connect(function(input)
   end
 end)
 
+  -- Info panel: Macro naming rules
+  local macroInfoPanel = Instance.new("Frame")
+  macroInfoPanel.Name = "MacroInfoPanel"
+  macroInfoPanel.BackgroundColor3 = COLORS.background_secondary
+  macroInfoPanel.Size = UDim2.new(1, -20, 0, 300)
+  macroInfoPanel.Position = UDim2.new(0, 10, 0, 820)
+  macroInfoPanel.Parent = macroContainer
+  createCorner(macroInfoPanel, 10)
+  createStroke(macroInfoPanel, COLORS.border, 1, 0.8)
+
+  local macroInfoHeader = Instance.new("TextLabel")
+  macroInfoHeader.BackgroundTransparency = 1
+  macroInfoHeader.Text = "Macro Naming Rules"
+  macroInfoHeader.TextColor3 = COLORS.text_secondary
+  macroInfoHeader.Font = Enum.Font.SourceSansBold
+  macroInfoHeader.TextSize = 16
+  macroInfoHeader.Size = UDim2.new(1, -20, 0, 22)
+  macroInfoHeader.Position = UDim2.new(0, 10, 0, 10)
+  macroInfoHeader.TextXAlignment = Enum.TextXAlignment.Left
+  macroInfoHeader.Parent = macroInfoPanel
+
+  local macroInfoDivider = Instance.new("Frame")
+  macroInfoDivider.BackgroundColor3 = COLORS.accent
+  macroInfoDivider.BackgroundTransparency = 0.65
+  macroInfoDivider.Size = UDim2.new(0, 120, 0, 2)
+  macroInfoDivider.Position = UDim2.new(0, 10, 0, 34)
+  macroInfoDivider.Parent = macroInfoPanel
+
+  local macroInfoBody = Instance.new("TextLabel")
+  macroInfoBody.Name = "MacroInfoBody"
+  macroInfoBody.BackgroundTransparency = 1
+  macroInfoBody.TextColor3 = COLORS.text_dim
+  macroInfoBody.Font = Enum.Font.SourceSans
+  macroInfoBody.TextSize = 15
+  macroInfoBody.TextWrapped = true
+  macroInfoBody.TextYAlignment = Enum.TextYAlignment.Top
+  macroInfoBody.TextXAlignment = Enum.TextXAlignment.Left
+  macroInfoBody.Size = UDim2.new(1, -20, 0, 250)
+  macroInfoBody.Position = UDim2.new(0, 10, 0, 44)
+  macroInfoBody.Parent = macroInfoPanel
+
+  macroInfoBody.Text = [[To use Auto Select Macro, file names must follow this strict format:
+
+• General macros → [map_name]_general
+  Covers challenges:
+  - Flying enemies
+  - Juggernaut enemies
+  - Unsellable
+
+  Examples:
+  - city_of_york_general
+  - city_of_voldstanding_general
+
+• Special challenges → [map_name]_[challenge_type]
+  Challenge types:
+  - single_placement
+  - high_cost
+
+  Examples:
+  - hidden_storm_village_single_placement
+  - giant_island_high_cost
+
+Notes:
+- Use lowercase letters and underscores only.
+- Always end with _general, _single_placement, or _high_cost depending on the challenge.
+- If you need one macro per challenge, duplicate the map name with the correct suffix.]]
+
   -- Update canvas size for macro container
   local function recomputeCanvas()
     local maxY = 0
     for _, c in ipairs(macroContainer:GetChildren()) do
       if c:IsA("GuiObject") and c.Visible then
         local bottom = c.Position.Y.Offset + c.Size.Y.Offset
-        if bottom > maxY then
-          maxY = bottom
-        end
+        if bottom > maxY then maxY = bottom end
       end
     end
-    macroContainer.CanvasSize = UDim2.new(0, 0, 0, maxY + 300) -- extra padding
+    macroContainer.CanvasSize = UDim2.new(0, 0, 0, maxY + 40)
   end
 
   recomputeCanvas()
+  -- === Restore persisted toggle states ===
+  task.spawn(function()
+    local tg = Config.data.toggles or {}
+
+    -- FindTB
+    if tg.findTB then
+      isTBActive = true
+      setTBVisual(true, false)
+      -- signal external if present
+      pcall(function()
+        if getgenv and getgenv().FindTB and typeof(getgenv().FindTB.start)=="function" then getgenv().FindTB.start() end
+      end)
+    else
+      setTBVisual(false, false)
+    end
+
+    -- Auto Replay
+    if tg.autoReplay then
+      AutoReplay.enabled = true
+      arKnob.Position = UDim2.new(1, -24, 0.5, 0)
+      arSwitch.BackgroundColor3 = COLORS.accent
+    else
+      AutoReplay.enabled = false
+      arKnob.Position = UDim2.new(0, 2, 0.5, 0)
+      arSwitch.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    end
+
+    -- Auto Select
+    if tg.autoSelect then
+      AutoSelect.enabled = true
+      asKnob.Position = UDim2.new(1, -24, 0.5, 0)
+      asSwitch.BackgroundColor3 = COLORS.accent
+    else
+      AutoSelect.enabled = false
+      asKnob.Position = UDim2.new(0, 2, 0.5, 0)
+      asSwitch.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    end
+
+    -- If both are somehow on, prefer Auto Select
+    if AutoReplay.enabled and AutoSelect.enabled then
+      AutoReplay.enabled = false
+      Config.data.toggles.autoReplay = false
+      arKnob.Position = UDim2.new(0, 2, 0.5, 0)
+      arSwitch.BackgroundColor3 = Color3.fromRGB(20,20,20)
+      saveConfig()
+    end
+
+    -- Normalize status text based on final state
+    if AutoReplay.enabled then
+      updateStatus("idle", "Auto replay enabled")
+    elseif AutoSelect.enabled then
+      updateStatus("idle", "Auto select macro enabled")
+    else
+      updateStatus("idle", "Ready to record")
+    end
+  end)
 
   -- ===== FUNCIONES DE NAVEGACIÓN =====
   local function switchTab(tabName)
@@ -1598,9 +1755,35 @@ end)
     toggles = {
       findTB = {
         active = function() return isTBActive end,
-        set = function(state) 
-          isTBActive = state
-          setTBVisual(state)
+        set = function(state)
+          isTBActive = state and true or false
+          setTBVisual(isTBActive)
+          Config.data.toggles.findTB = isTBActive
+          saveConfig()
+        end
+      },
+      autoReplay = {
+        active = function() return AutoReplay.enabled end,
+        set = function(state)
+          if state and AutoSelect.enabled then return end -- keep mutual exclusion
+          AutoReplay.enabled = state and true or false
+          arKnob.Position = AutoReplay.enabled and UDim2.new(1, -24, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+          arSwitch.BackgroundColor3 = AutoReplay.enabled and COLORS.accent or Color3.fromRGB(20,20,20)
+          Config.data.toggles.autoReplay = AutoReplay.enabled
+          saveConfig()
+          refreshMacroStatusMessage()
+        end
+      },
+      autoSelect = {
+        active = function() return AutoSelect.enabled end,
+        set = function(state)
+          if state and AutoReplay.enabled then return end
+          AutoSelect.enabled = state and true or false
+          asKnob.Position = AutoSelect.enabled and UDim2.new(1, -24, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
+          asSwitch.BackgroundColor3 = AutoSelect.enabled and COLORS.accent or Color3.fromRGB(20,20,20)
+          Config.data.toggles.autoSelect = AutoSelect.enabled
+          saveConfig()
+          refreshMacroStatusMessage()
         end
       }
     },
