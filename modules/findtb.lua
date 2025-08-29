@@ -41,12 +41,34 @@ end
 local _opts = nil
 
 -- ===== Config =====
+
 local UI_TIMEOUT_SEC   = 20
 local RETRIES_PRESS    = 3
 local WAIT_BETWEEN_TRY = 0.35
 local TB_EVENT_WINDOW  = 1.3
 local CHAPTER          = 1
 local DIFFICULTY       = "Hard"
+
+-- Espera a que el UI de Challenges esté realmente listo
+local function waitForChallengeUI(totalTimeout)
+    totalTimeout = totalTimeout or 12
+    local t0 = tick()
+    local attempts = 0
+    while tick() - t0 < totalTimeout do
+        local s = findStageScroll()
+        local rr = descend(PG, {"MainUI","WorldFrame","WorldFrame","MainFrame","RightFrame"}, 1.0)
+        if s and rr then
+            return true
+        end
+        Run.RenderStepped:Wait()
+        -- Reintenta reabrir el Pod si tarda demasiado en aparecer
+        if (tick() - t0) > (3 + attempts * 3) then
+            attempts += 1
+            tpToChallengePod()
+        end
+    end
+    return false
+end
 
 -- ===== Estado =====
 local LAST_SELECTED = "Challenge1"
@@ -434,6 +456,10 @@ local function clickTextButton(btn)
 end
 
 local function scan_challenge(i)
+    -- Asegurar que el UI esté listo antes de escanear
+    if not findStageScroll() then
+        waitForChallengeUI(10)
+    end
     local scroll = findStageScroll()
     if not scroll then return {ok=false} end
     local node = scroll:FindFirstChild("Challenge"..i)
@@ -487,7 +513,12 @@ function M.start(opts)
 
     task.spawn(function()
         tpToChallengePod()
-        descend(PG, {"MainUI","WorldFrame"}, 6.0)
+        -- Esperar a que aparezca StageScroll/RightFrame; si no, reintentar abrir el Pod
+        if not waitForChallengeUI(14) then
+            warn("[FindTB] Challenge UI no listo tras primer intento; reintentando abrir Pod…")
+            tpToChallengePod()
+            waitForChallengeUI(10)
+        end
 
         local FOUND = false
         for i=1,4 do
@@ -511,7 +542,7 @@ function M.start(opts)
                     end
                 end
             end
-            task.wait(0.12)
+            task.wait(0.18)
         end
 
         if not FOUND and running then
@@ -545,7 +576,7 @@ function M.start(opts)
                                 end
                             end
                         end
-                        task.wait(0.12)
+                        task.wait(0.18)
                     end
                     if found or not running or ENTERED then break end
                     task.wait(RESCAN_EVERY_SEC)
