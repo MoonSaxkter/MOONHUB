@@ -278,7 +278,8 @@ local CHALLENGE_KEYWORDS = {
     "random units","random","everything but imagination","random enemies",
     "flying enemies","flying","juggernaut","boss rush","single placement","single",
     "high cost","increased cost","time limit","limited time","no sell","cannot sell",
-    "double hp","more hp"
+    "double hp","more hp",
+    "unsellable"
 }
 
 -- Escanea RightFrame para deducir el “hint” de challenge (texto libre del UI)
@@ -346,6 +347,9 @@ local function canonicalChallengeFromHint(hint)
     end
     if hint:find("high cost",1,true) or hint:find("increased cost",1,true) then
         return "High Cost"
+    end
+    if hint:find("unsellable",1,true) or hint:find("no sell",1,true) or hint:find("cannot sell",1,true) then
+        return "Unsellable"
     end
     return ""
 end
@@ -416,6 +420,9 @@ local function scan_challenge(i)
     if not (btn and btn:IsA("TextButton")) then return {ok=false} end
 
     LAST_SELECTED = "Challenge"..i
+    if M and M.state then
+        M.state.LAST_SELECTED = LAST_SELECTED
+    end
     clickTextButton(btn)
     waitRewardsRefresh(1.0)
 
@@ -531,5 +538,7 @@ function M.stop()
     ENTERED = true -- forza la salida de los bucles activos
     print("[FindTB] stopped by UI toggle")
 end
+
+M.state = { LAST_SELECTED = LAST_SELECTED }
 
 return M
