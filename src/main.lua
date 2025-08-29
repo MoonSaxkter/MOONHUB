@@ -181,6 +181,13 @@ end
 -- Cargar estado previo antes de construir el hub
 Config.load()
 
+-- === 3.9) Cargar MacroAPI antes del Hub ===
+-- Cargamos macrosys.lua tempranamente para que Hub.build pueda registrar
+-- callbacks (onStatus/onAction) y los botones no muestren "not loaded".
+pcall(function()
+  ensureMacroAPI()
+end)
+
 -- === 4) Cargar hub.lua y construir la UI ===
 local Hub
  do
@@ -212,11 +219,6 @@ local hub
   if not okBuild then warn("[Main][ERROR] Hub.build fallo:", res) return end
   hub = res
  end
-
--- Cargar MacroAPI antes de anunciar el Hub, para que los botones de Macro funcionen al abrir
-pcall(function()
-  ensureMacroAPI()
-end)
 
 print("[Main] Hub cargado:", hub and hub.root and hub.root.Name or "(sin root)")
 
